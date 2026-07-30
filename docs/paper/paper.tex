@@ -1,0 +1,275 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb,booktabs,graphicx,xcolor}
+\usepackage{times}
+\usepackage[colorlinks,linkcolor=blue!50!black,citecolor=blue!50!black]{hyperref}
+\newcommand{\dd}{\,\mathrm{d}}
+\newcommand{\sgn}{\operatorname{sgn}}
+\newcommand{\TODO}[1]{\textcolor{red}{[#1]}}
+\title{\bf Optimal-transport targets for macromolecular model fitting:\\
+non-vanishing gradients from a structure-factor computation}
+\author{P.\ H.\ Zwart\\
+\small Molecular Biophysics and Integrated Bioimaging, Lawrence Berkeley National Laboratory}
+\date{}
+\begin{document}\maketitle
+
+\begin{abstract}\noindent
+Real-space refinement targets are local: their gradient decays with the overlap between
+model and map, so a model placed even a few resolution widths away receives no usable
+signal. Optimal-transport (OT) discrepancies do not share this behaviour --- the gradient
+of a Wasserstein-1 objective is bounded away from zero wherever mass is misplaced --- but
+the formulations used to date represent both densities as point clouds in real space, which
+does not compose with refinement engines built on structure factors. We show that sliced
+$W_1$ against a sampled map \emph{is} a structure-factor computation: the target's
+projected profile along any direction is a central slice of its transform, the model's
+projected profile has an exact one-dimensional transform which is a structure factor with
+the usual atomic form factor, and convolution, differentiation and integration all become
+reciprocal-space multipliers. Atomic gradients then follow by the route crystallography
+already uses, with atoms gridded at a common width and the residual $B$ applied as a
+per-type multiplier. Against a case with a closed-form answer the gradient agrees with
+finite differences to $3\times10^{-9}$; the floor reaches $5\times10^{-7}$ on cubic,
+non-cubic, monoclinic and triclinic grids alike; and the gridded route is $152\times$
+faster than direct summation at $8\times10^{3}$ atoms. We argue that the resulting target
+is a \emph{search} device to be followed by a conventional forward-model refinement, and
+we are explicit that the protocols needed to make it robust in production are outside the
+scope of this work.
+\end{abstract}
+
+\section{Introduction}
+
+\subsection{Why refinement targets go blind}
+
+A real-space refinement target scores a model by how its computed density agrees with an
+observed map, and every such score is built from products of the two densities evaluated
+where they overlap. When a model is misplaced by more than a resolution width that overlap
+falls off like the tail of a Gaussian, and with it the gradient. The practical consequence
+is familiar: a ligand modelled into the wrong lobe of density, or a side chain in the wrong
+rotamer, is not repaired by refinement, because the target has nothing to say about where
+the model should go. It has to be moved by something else --- a human, a search, or a
+docking calculation --- and refinement then polishes whatever it is handed.
+
+This is not a defect of any particular target so much as a property of local comparison.
+A least-squares residual on the map, a correlation coefficient, and the sum of density at
+atomic centres all share it, and they degrade in two distinguishable ways
+(\S\ref{sec:reach}): the sum-of-density gradient keeps pointing roughly the right way but
+shrinks by nine orders of magnitude over ten \AA ngstr\"om, while the least-squares
+gradient keeps its magnitude and \emph{reverses direction} once the two densities cease to
+overlap and the model's self-term dominates.
+
+\subsection{Optimal transport, for crystallographers}
+
+Optimal transport supplies a different way to compare two densities, and one that does not
+require them to overlap at all. Given two non-negative densities of equal total mass, the
+Kantorovich problem asks for the cheapest way to rearrange one into the other, where the
+cost of moving a unit of mass from $x$ to $y$ is some ground cost $c(x,y)$. Taking
+$c(x,y)=\lVert x-y\rVert$ gives the Wasserstein-1 distance $W_1$, sometimes called the
+earth-mover's distance: the answer is literally how far mass has to travel, and it is
+finite and informative however far apart the two densities are.
+
+The reason this is not routine in crystallography is cost. Solving a transport problem
+between two three-dimensional maps is a large linear program, and the entropically
+regularised solvers that made OT tractable in machine learning introduce a regularisation
+parameter whose setting is itself a problem. The device that makes OT affordable is
+\emph{slicing}. In one dimension the transport problem has a closed-form solution obtained
+by sorting: the optimal map is the monotone rearrangement, and
+\begin{equation}
+W_1(\mu,\nu)=\int \bigl|F_\mu(t)-F_\nu(t)\bigr|\dd t
+\label{eq:w1d}
+\end{equation}
+where $F$ denotes a cumulative distribution. Sliced OT replaces the $d$-dimensional problem
+by an average over one-dimensional problems obtained by projecting both measures onto a set
+of directions,
+\begin{equation}
+\mathcal{SW}_1(\mu,\nu)=\frac{1}{L}\sum_{\ell=1}^{L}
+ W_1\bigl(P_{u_\ell}\mu,\,P_{u_\ell}\nu\bigr),
+\label{eq:sw1}
+\end{equation}
+each of which is a sort. The result is a genuine metric, it inherits the topology of $W_1$,
+and it costs $O(N\log N)$ per direction rather than the cost of a linear program.
+
+Sliced OT is by now well established in imaging and increasingly in cryo-EM. AlignOT
+\TODO{cite Riahi et al., IEEE/ACM TCBB 20, 3842 (2023)} aligns two EM maps represented as
+point clouds by minimising a Wasserstein objective over rotations, reporting convergence
+from a wider range of starting angles than local alignment. EMPOT \TODO{cite Riahi et al.,
+PRX Life 3, 023003 (2025)} extends this to partial overlap and rigid-body fitting of atomic
+models using an unbalanced Gromov--Wasserstein divergence. Related work uses transport for
+interpolation between maps \TODO{MorphOT}, for manifold learning over conformational
+ensembles \TODO{Zelesko et al., ISBI 2020}, and for three-dimensional reconstruction
+\TODO{CryoSWD, Zehni \& Zhao, ICASSP 2023}. Most directly, a recent study
+\TODO{bioRxiv 2025.12.23.696001} reports that a sliced-Wasserstein image loss
+``significantly broadens the basin of attraction'' relative to mean-squared error in
+cryo-EM optimisation. \emph{That OT opens gradients is therefore established}, and it is
+not what this paper claims. What is missing is a formulation that a crystallographic
+refinement engine can actually execute.
+
+\subsection{Non-vanishing gradients: the good and the bad}
+
+The property that makes $W_1$ attractive follows from its dual. The optimal potential is
+$1$-Lipschitz and, in one dimension, has the closed form
+\begin{equation}
+f'_\ell(t) = -\sgn\bigl(F_{P_{u_\ell}\mu}(t)-F_{P_{u_\ell}\nu}(t)\bigr),
+\label{eq:pot}
+\end{equation}
+a \emph{sign}. Its magnitude is one wherever the two cumulative distributions differ at all,
+and it is defined everywhere rather than only where the densities overlap. Smoothing by the
+atomic form factor and backprojecting gives the atomic gradient
+(\S\ref{sec:formulation}), whose magnitude is therefore bounded below as long as any mass
+is misplaced, at any separation.
+
+That is exactly the wanted behaviour for a search, and exactly the wrong behaviour for a
+refinement. Because the gradient is a smoothed sign, it does not diminish as the model
+approaches the answer, and it therefore carries no natural step length: a descent scheme
+driven by it overshoots and limit-cycles rather than converging. Two consequences follow
+and we adopt both. First, the step length must come from somewhere else; the barycentric
+projection of the same transport plan --- the monotone rearrangement itself --- supplies a
+displacement rather than a force, and it \emph{does} vanish at the solution
+(\S\ref{sec:step}). Second, and more importantly, the transport term should not be the
+final target at all. Left unrestrained it will happily distort a model to fit density: we
+measure a configuration with $1.25$\,\AA{} distance errors scoring $8.5\times$ better on
+the transport term than the chemically exact answer. The intended role is to deliver a
+model into the correct basin, after which a conventional forward-model refinement --- with
+its proper treatment of scaling, bulk solvent, and stereochemistry --- takes over.
+
+\subsection{Why not just search harder}
+
+The obvious alternative to a better target is a better search: exhaustive rotation--
+translation scans, docking, or simulated annealing. These work, and for rigid-body placement
+of a whole molecule they are standard. The difficulty is atomic-level fitting, where the
+search space is not six-dimensional but $3N$-dimensional, and where the interesting failures
+--- a wrong rotamer, a peptide flip, a ligand bound in a shifted register --- are not
+reachable by rigid-body moves. Conformer-ensemble methods address this by enumerating
+plausible geometries in advance, but the number of conformers grows quickly and each must
+still be placed and scored. What is wanted is a target whose gradient reaches, so that a
+small number of starting points suffices, and which is cheap enough to evaluate that an
+ensemble of them can be scored at all. The formulations cited above are point-cloud based
+and rigid-body; they do not provide per-atom analytic gradients, and they scale poorly in
+the atom count where a protein fragment or a cofactor is concerned.
+
+\subsection{What this paper does}
+
+We show that sliced $W_1$ against a sampled map is a structure-factor computation, and that
+its atomic gradients can therefore be evaluated by the FFT route crystallography has used
+since Agarwal \TODO{cite Agarwal 1978} and Ten Eyck \TODO{cite Ten Eyck 1973/1977}: grid the
+atoms at a common width, apply the residual $B$ as a per-type reciprocal-space multiplier,
+transform, and gather at the atomic positions. The contribution is the formulation and its
+cost, not an application. We demonstrate that naive, hand-set targets are already enough to
+recover badly placed models in two synthetic cases, and we are explicit that the protocols
+required to make this robust on experimental data --- masking and segmentation decisions,
+per-atom $B$ treatment, handling of negative density, symmetry mates and the surrounding
+structure --- are identified but not solved here.
+
+\section{Formulation}\label{sec:formulation}
+
+\TODO{Slice theorem; exact 1-D structure factor for the model; operators as multipliers;
+the phase-origin and branch conventions. Text exists in the earlier draft --- port it.}
+
+\section{Atomic gradients by the Agarwal/Ten Eyck route}\label{sec:fft}
+
+\TODO{The $B$-factor split; forward scatter and backward gather; per-type grouping;
+the observation that the gather kernel is the form factor itself rather than its
+derivative, because the $2\pi i q$ from the phase cancels against the $1/2\pi i q$ of the
+spectral antiderivative.}
+
+\begin{table}[h]\centering\small
+\caption{Cost of value and gradient, $L=24$, CPU, single precision-independent.
+$K$ grows with the model because the projection window must contain it, so direct
+summation scales worse than linearly in $N$.}
+\begin{tabular}{@{}rrrrr@{}}\toprule
+$N$ & $K$ & direct (ms) & gridded (ms) & speedup\\\midrule
+23 & 95 & 2.6 & 3.9 & 0.7$\times$\\
+200 & 119 & 22.0 & 5.6 & 4.0$\times$\\
+2000 & 257 & 4594 & 64.7 & 71$\times$\\
+8000 & 467 & 26079 & 171.4 & \textbf{152}$\times$\\\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Reach, and how conventional targets fail}\label{sec:reach}
+
+Capped leucine fragment (13 heavy atoms, $N$-acetyl-leucine-$N'$-methylamide), $2.5$\,\AA,
+$\sigma=1.062$\,\AA. ``cos'' is the cosine between $-\nabla E$ and the true displacement.
+
+\begin{table}[h]\centering\small
+\begin{tabular}{@{}rrrrrrrr@{}}\toprule
+$t$ (\AA) & $t/\sigma$ & \multicolumn{2}{c}{OT} & \multicolumn{2}{c}{least squares}
+ & \multicolumn{2}{c}{sum of density}\\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+ & & $\lVert g\rVert/w$ & cos & $\lVert g\rVert$ & cos & $\lVert g\rVert$ & cos\\\midrule
+ 2 & 1.9 & 0.5009 & 0.996 & 1.6e-5 & 0.988 & 1.6e-5 & 0.992\\
+ 4 & 3.8 & 0.5009 & 0.996 & 1.6e-5 & 0.976 & 2.8e-6 & 0.955\\
+ 6 & 5.7 & 0.5009 & 0.996 & 1.4e-5 & \textbf{0.431} & 5.6e-8 & 0.914\\
+ 8 & 7.5 & 0.5009 & 0.996 & 1.4e-5 & \textbf{$-$0.280} & 1.0e-10 & 0.895\\
+12 & 11.3 & \textbf{0.5009} & \textbf{0.996} & 1.4e-5 & 0.229 & 1.6e-14 & $-$0.962\\
+\bottomrule\end{tabular}
+\end{table}
+
+Radius of convergence, random rotation ($0$--$30^\circ$) plus translation of magnitude $d$,
+10 trials, identical restraint projection and identical normalised step for every target,
+no annealing, success at RMSD $<0.5$\,\AA:
+
+\begin{table}[h]\centering\small
+\begin{tabular}{@{}rrrrr@{}}\toprule
+$d$ (\AA) & $d/\sigma$ & OT & least squares & sum of density\\\midrule
+1--3 & $\le$2.8 & 100\% & 100\% & 100\%\\
+4 & 3.8 & \textbf{100\%} & 100\% & 90\%\\
+6 & 5.7 & \textbf{100\%} & 90\% & 80\%\\
+8 & 7.5 & \textbf{100\%} & 10\% & 0\%\\
+\bottomrule\end{tabular}
+\end{table}
+
+Normalising the step for every target deliberately favours the conventional ones, since it
+neutralises their magnitude decay and tests only direction; the advantage reported here is
+therefore a lower bound.
+
+\section{Step length from the barycentric projection}\label{sec:step}
+
+\TODO{$M^{-1}$ backprojection factor, one-step recovery of a rigid translation, and the
+measured comparison: final RMSD $0.010$\,\AA{} with $\delta$-derived steps against
+$0.133$\,\AA{} with a fixed cap, oscillation $0.002$ against $0.057$\,\AA.}
+
+\section{Validation}\label{sec:valid}
+
+\begin{table}[h]\centering\small
+\caption{End-to-end validation across grid geometries, leucine fragment, $2.5$\,\AA,
+$L=32$. The floor is a diagnostic of the \emph{map}: it detects inadequate padding, and
+requires a clearance of $\gtrsim7\sigma$ between the model and the box or cell boundary.}
+\begin{tabular}{@{}lrrrrr@{}}\toprule
+grid & floor & anchor & FD median & reach @ 12\,\AA & 1-step\\\midrule
+cubic $48^3$ & 4.79e-7 & $+0.000\%$ & 1.3e-9 & $+0.000\%$ & 5.2e-3\,\AA\\
+non-cubic, anisotropic step & 4.76e-7 & $+0.000\%$ & 7.7e-10 & $+0.000\%$ & 5.2e-3\,\AA\\
+monoclinic $60\times66\times54$ & 4.73e-7 & $+0.000\%$ & 1.7e-9 & $+0.000\%$ & 5.0e-3\,\AA\\
+triclinic $96\times100\times104$ & 4.80e-7 & $+0.000\%$ & 2.7e-9 & $+0.000\%$ & 5.0e-3\,\AA\\
+\bottomrule\end{tabular}
+\end{table}
+
+The formulation is exact on a general grid because the target slices are computed as a
+structure factor over voxels rather than by interpolating a central slice of the map's
+transform; the only place grid geometry enters is each voxel's Cartesian position.
+Bandwidth is set by the shortest reciprocal vector of the sampling lattice, which on a
+skewed cell can be twice what the step lengths suggest.
+
+\section{Demonstrations}\label{sec:demo}
+
+\TODO{NOT YET RUN. Both use synthetic data, equal $B$ factors, a naive hand-set stage
+schedule, the alternating-projection protocol ($P_{\rm data}$ then $P_{\rm restr}$, over-
+relaxed), and a final map-correlation refinement. In both cases the same protocol started
+from a map-correlation target is the control.}
+
+\subsection{Pentapeptide with wrong rotamers and backrub main-chain motion}
+\TODO{Design: build a pentapeptide, perturb two side chains to incorrect rotamers and apply
+a backrub motion to the intervening main chain; refine; report RMSD by residue and
+separately for main chain and side chain.}
+
+\subsection{NAD\textsuperscript{+}/NADH from a conformer ensemble}
+\TODO{Design: generate a conformer ensemble, place each into the map of the correct
+conformer, score by transport, refine the best; report rank of the correct conformer and
+final RMSD.}
+
+\section{Scope and what is deliberately left out}
+
+\TODO{Search target not refinement target; balanced formulation and what breaks for a
+fragment in a larger assembly; negative density and the segmentation decision (measured:
+contouring truncates the second moment by up to 25\% and degrades the fit by 6$\times$);
+per-atom $B$; symmetry mates and environment. Electron scattering factors are also Gaussian
+sums, so the same route serves cryo-EM.}
+
+\end{document}
