@@ -122,6 +122,9 @@
       <label>Isovalue <span class="val" id="iso-val">—</span></label>
       <input id="iso" type="range" min="0" max="100" value="50" />
 
+      <label>Density opacity <span class="val" id="iso-op-val">0.25</span></label>
+      <input id="iso-op" type="range" min="5" max="100" value="25" />
+
       <label>Atom color</label>
       <div class="row">
         <button id="color-elem" class="active" type="button">Element</button>
@@ -162,7 +165,7 @@
     let colorBy = "elem";
     let showIso = true;
     let showTrue = false;
-    let cubeText = null;
+    let volumeData = null;  // parsed once; re-adding cube text every frame freezes play
     let workCoords = null;  // current working coords (Nx3)
     let playTimer = null;
 
@@ -171,9 +174,9 @@
       el.classList.add(cls);
     }
 
-    // Unlabelled free-atom style (water oxygen CPK) before naming.
-    const FREE_ATOM_COLOR = "#ff0d0d";
-    const FREE_ATOM_RADIUS = 0.55;
+    // Unlabelled free-atom style — bright against green density.
+    const FREE_ATOM_COLOR = "#ff3b30";
+    const FREE_ATOM_RADIUS = 0.75;
 
     function atomColor(atom) {
       if (colorBy === "res") return RES_COLOR[atom.resn] || "#cccccc";
@@ -202,13 +205,34 @@
     function drawFreeAtoms(coords, { opacity = 1.0 } = {}) {
       for (let i = 0; i < coords.length; i++) {
         const p = coords[i];
+        const center = { x: p[0], y: p[1], z: p[2] };
+        // Soft halo so atoms stay visible inside the green isosurface.
         viewer.addSphere({
-          center: { x: p[0], y: p[1], z: p[2] },
+          center,
+          radius: FREE_ATOM_RADIUS * 1.55,
+          color: FREE_ATOM_COLOR,
+          opacity: Math.min(0.22, opacity * 0.25),
+        });
+        viewer.addSphere({
+          center,
           radius: FREE_ATOM_RADIUS,
           color: FREE_ATOM_COLOR,
           opacity,
         });
       }
+    }
+
+    function drawDensity() {
+      if (!showIso || !volumeData) return;
+      const iso = currentIso();
+      const op = Number($("iso-op").value) / 100;
+      $("iso-val").textContent = iso.toExponential(2);
+      $("iso-op-val").textContent = op.toFixed(2);
+      viewer.addIsosurface(volumeData, {
+        isoval: iso,
+        color: "#3cb371",
+        opacity: op,
+      });
     }
 
     function drawMolecule(coords, {
@@ -252,10 +276,14 @@
       viewer.removeAllShapes();
       viewer.removeAllModels();
 
+      // Density first, atoms after — otherwise the isosurface depth-writes
+      // over free atoms that have entered the map.
+      drawDensity();
+
       const stage = currentPathStage();
       if (mode === "path" && isFreeAtomStage(stage)) {
-        // Pre-naming: unlabelled free atoms (water-like), no chemistry.
-        drawFreeAtoms(workCoords, { opacity: 0.95 });
+        // Pre-naming: unlabelled free atoms, no chemistry.
+        drawFreeAtoms(workCoords, { opacity: 1.0 });
       } else {
         drawMolecule(workCoords, {
           bondRadius: 0.11,
@@ -276,15 +304,6 @@
         });
       }
 
-      if (showIso && cubeText) {
-        const iso = currentIso();
-        $("iso-val").textContent = iso.toExponential(2);
-        viewer.addVolumetricData(cubeText, "cube", {
-          isoval: iso,
-          color: "#d4a574",
-          opacity: 0.45,
-        });
-      }
       viewer.render();
     }
 
@@ -348,18 +367,51 @@
         $("frame-val").textContent = String(v);
         setWorkCoordsFromMode();
         rebuild();
-      }, 70);
+      }, 40);
     }
 
-    function zoomOnce() {
+    function zoomToCoordSets(coordSets) {
       // Dummy model so zoomTo has atoms; then clear and redraw shapes.
-      const lines = structure.atoms.map((a, i) => {
-        const c = workCoords[i];
-        return `ATOM  ${(i + 1).toString().padStart(5)}  ${a.name.padStart(3)} ${a.resn} A${String(a.resi).padStart(4)}    ${c[0].toFixed(3).padStart(8)}${c[1].toFixed(3).padStart(8)}${c[2].toFixed(3).padStart(8)}`;
-      });
+      const lines = [];
+      let serial = 1;
+      for (const coords of coordSets) {
+        if (!coords || !coords.length) continue;
+        for (let i = 0; i < coords.length; i++) {
+          const a = structure.atoms[i];
+          const c = coords[i];
+          lines.push(
+            `ATOM  ${String(serial).padStart(5)}  ${a.name.padStart(3)} ${a.resn} A${String(a.resi).padStart(4)}    `
+            + `${c[0].toFixed(3).padStart(8)}${c[1].toFixed(3).padStart(8)}${c[2].toFixed(3).padStart(8)}`,
+          );
+          serial += 1;
+        }
+      }
+      if (!lines.length) return;
       viewer.addModel(lines.join("\n") + "\nEND\n", "pdb", { assignBonds: false });
       viewer.zoomTo();
       viewer.removeAllModels();
+    }
+
+    function zoomForMode() {
+      if (mode === "path" && structure.path_coords && structure.path_coords.length) {
+        // Frame the scatter → density journey, not just the final pose.
+        const path = structure.path_coords;
+        const stages = structure.path_stages || [];
+        const freeLast = (() => {
+          for (let i = stages.length - 1; i >= 0; i--) {
+            if (stages[i] === "random" || stages[i] === "free") return i;
+          }
+          return Math.min(path.length - 1, 40);
+        })();
+        zoomToCoordSets([
+          path[0],
+          path[Math.floor(freeLast / 2)],
+          path[freeLast],
+          structure.true_coords,
+        ]);
+        return;
+      }
+      zoomToCoordSets([workCoords]);
     }
 
     async function boot() {
@@ -375,7 +427,7 @@
       ]);
       meta = metaR;
       structure = structR;
-      cubeText = cubeR;
+      volumeData = new $3Dmol.VolumeData(cubeR, "cube");
       workCoords = structure.true_coords;
 
       $("title").textContent = meta.label;
@@ -410,7 +462,7 @@
       }
 
       setWorkCoordsFromMode();
-      zoomOnce();
+      zoomForMode();
       rebuild();
 
       $("btn-ref").onclick = () => {
@@ -419,6 +471,7 @@
         setActive(modeBtns, $("btn-ref"));
         configureFrameSlider();
         setWorkCoordsFromMode();
+        zoomForMode();
         rebuild();
       };
       $("btn-path").onclick = () => {
@@ -429,6 +482,7 @@
         $("frame").value = "1";
         configureFrameSlider();
         setWorkCoordsFromMode();
+        zoomForMode();
         rebuild();
       };
       $("btn-ens").onclick = () => {
@@ -439,6 +493,7 @@
         $("frame").value = "1";
         configureFrameSlider();
         setWorkCoordsFromMode();
+        zoomForMode();
         rebuild();
       };
       $("frame").oninput = () => {
@@ -473,6 +528,7 @@
         rebuild();
       };
       $("iso").oninput = () => rebuild();
+      $("iso-op").oninput = () => rebuild();
 
       $("color-elem").onclick = () => {
         colorBy = "elem";
