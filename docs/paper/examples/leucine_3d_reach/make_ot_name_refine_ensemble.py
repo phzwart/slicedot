@@ -27,6 +27,7 @@ from slicedot import (
     Namer,
     SlicedOT,
     SlicedOTConfig,
+    prune_ghosts,
     restraint_set_from_geometry,
     sigma_from_resolution,
 )
@@ -335,14 +336,23 @@ def _admm_geom_beta(t: int, T: int = CLEANUP_ANNEAL,
     return float(rng.uniform(lo_f, hi_t))
 
 
-def run_free_ot(scene, X0, *, lr=OT_LR, max_steps=MAX_FREE_STEPS,
-                patience=FREE_PATIENCE):
-    """Free-atom OT until the OT loss plateaus (no use of the true pose)."""
+def run_free_ot(scene, X0, *, w=None, lr=OT_LR, max_steps=MAX_FREE_STEPS,
+                patience=FREE_PATIENCE, log_every: int = 25):
+    """Free-atom OT until the OT loss plateaus (no use of the true pose).
+
+    ``w`` defaults to ``scene["w"]`` (chemical).  Overcomplete free OT should
+    pass a local uniform ``w_free`` and leave ``scene["w"]`` untouched.
+    """
+    import time as _time
     X_true = scene["X_true"]
-    w = scene["w"]
+    w = scene["w"] if w is None else np.asarray(w, dtype=np.float64)
     ot = scene["ot"]
     sig = scene["sigma"]
     X = np.asarray(X0, dtype=np.float64).copy()
+    if X.shape[0] != w.shape[0]:
+        raise ValueError(
+            f"free OT weight length {w.shape[0]} != atom count {X.shape[0]}"
+        )
     opt = Adam(X.shape, lr=lr)
     E0, _ = vg_ot(ot, X, w, sig)
     energies = [float(E0)]
@@ -351,7 +361,13 @@ def run_free_ot(scene, X0, *, lr=OT_LR, max_steps=MAX_FREE_STEPS,
     best_E = energies[0]
     stagnant = 0
     reason = "max_steps"
-    for _ in range(max_steps):
+    t0 = _time.perf_counter()
+    print(
+        f"  [free OT] N={X.shape[0]}  step 0  OT={energies[0]:.5g}  "
+        f"NN={nn_rmsds[0]:.4f} Å",
+        flush=True,
+    )
+    for k in range(1, max_steps + 1):
         E, G = vg_ot(ot, X, w, sig)
         X = opt.step(X, G)
         poses.append(X.copy())
@@ -363,6 +379,12 @@ def run_free_ot(scene, X0, *, lr=OT_LR, max_steps=MAX_FREE_STEPS,
             stagnant = 0
         else:
             stagnant += 1
+        if k % log_every == 0 or stagnant >= patience:
+            print(
+                f"  [free OT] step {k}  OT={E:.5g}  NN={nn_rmsds[-1]:.4f} Å  "
+                f"({_time.perf_counter() - t0:.1f}s, stagnant={stagnant})",
+                flush=True,
+            )
         if stagnant >= patience:
             reason = "ot_loss_plateau"
             break
@@ -935,22 +957,84 @@ def build_label_trajectory(
     }
 
 
-def run_one(scene, seed: int, *, save_trajectory: bool = False) -> dict:
+def run_one(
+    scene,
+    seed: int,
+    *,
+    atom_factor: float = 1.0,
+    save_trajectory: bool = False,
+) -> dict:
     rng = np.random.default_rng(int(seed))
     X_true = scene["X_true"]
-    w = scene["w"]
+    w_chem = np.asarray(scene["w"], dtype=np.float64)
     n = len(X_true)
+    atom_factor = float(atom_factor)
+    n_model = int(round(atom_factor * n))
+    if n_model < n:
+        raise ValueError("atom_factor < 1 is not supported (undercomplete)")
     half = scene["half"]
-    X_start = X_true.mean(0) + rng.uniform(-half, half, size=(n, 3))
+    X_start = X_true.mean(0) + rng.uniform(-half, half, size=(n_model, 3))
+    w_free = (
+        w_chem if n_model == n
+        else np.full(n_model, 1.0 / n_model, dtype=np.float64)
+    )
 
-    free = run_free_ot(scene, X_start)
+    print(
+        f"  [stage] free OT  N_model={n_model} (true={n}, ×{atom_factor:g})",
+        flush=True,
+    )
+    free = run_free_ot(scene, X_start, w=w_free)
     X_free = free["poses"][-1].copy()  # last iterate after OT-loss plateau
-    order = rng.permutation(n)
-    Y = X_free[order]
+    print(
+        f"  [stage] free OT done  steps={free['n_steps']}  "
+        f"NN={free['nn_rmsds'][-1]:.4f} Å  stop={free['stop_reason']}",
+        flush=True,
+    )
 
-    X_prior = scene["topo"]["X_ref"] - scene["topo"]["X_ref"].mean(0) + Y.mean(0)
-    asn = scene["namer"].assign(Y, X_prior, weights=None)
-    named = asn.Y_named.copy()
+    # L1 / refine always use chemical weights + map-resolution σ.
+    scene["l1"].sigma = float(scene["sigma"])
+
+    prune = None
+    if n_model != n:
+        print("  [stage] ghost prune …", flush=True)
+        X_prior = (
+            scene["topo"]["X_ref"]
+            - scene["topo"]["X_ref"].mean(0)
+            + X_free.mean(0)
+        )
+        prune = prune_ghosts(
+            X_free,
+            namer=scene["namer"],
+            X_prior=X_prior,
+            l1_oracle=scene["l1"],
+            w_chem=w_chem,
+            sigma=float(scene["sigma"]),
+            verbose=True,
+        )
+        asn = prune.assignment
+        named = prune.Y_named.copy()
+        # label i ← free index kept_idx[i]  ⇒  order=kept_idx, perm=id
+        order = np.asarray(prune.kept_idx, dtype=np.int64)
+        perm_for_traj = np.arange(n, dtype=np.int64)
+        print(
+            f"  [stage] prune done  ghosts={prune.ghost_idx.size}  "
+            f"L1={prune.l1:.5g}  restr_rms={prune.restraint_rms:.4f} Å  "
+            f"models={prune.n_models}",
+            flush=True,
+        )
+    else:
+        print("  [stage] naming …", flush=True)
+        order = rng.permutation(n)
+        Y = X_free[order]
+        X_prior = (
+            scene["topo"]["X_ref"]
+            - scene["topo"]["X_ref"].mean(0)
+            + Y.mean(0)
+        )
+        asn = scene["namer"].assign(Y, X_prior, weights=None)
+        named = asn.Y_named.copy()
+        perm_for_traj = np.asarray(asn.perm, dtype=np.int64)
+
     # Chemical recovery up to Aut: nearest true atom to named[i] should be alpha[i].
     n_match = 0
     for alpha in scene["namer"].automorphisms:
@@ -960,11 +1044,28 @@ def run_one(scene, seed: int, *, save_trajectory: bool = False) -> dict:
             if j == int(alpha[i]):
                 ok += 1
         n_match = max(n_match, ok)
+    print(
+        f"  [stage] named  RMSD={aut_rmsd(named, X_true, scene['namer']):.4f} Å  "
+        f"match={n_match}/{n}  restr_rms={asn.restraint_rms:.4f} Å",
+        flush=True,
+    )
 
+    print("  [stage] ADMM cleanup …", flush=True)
     cleanup = run_cleanup(scene, named, seed=seed)
     X_admm = cleanup["poses"][-1].copy()
+    print(
+        f"  [stage] ADMM done  steps={cleanup['n_steps']}  "
+        f"RMSD={cleanup['rmsds'][-1]:.4f} Å  stop={cleanup['stop_reason']}",
+        flush=True,
+    )
+    print("  [stage] L1+geom polish …", flush=True)
     polish = run_l1_geom_polish(scene, X_admm, seed=seed)
     X_clean = polish["poses"][-1].copy()
+    print(
+        f"  [stage] polish done  steps={polish['n_steps']}  "
+        f"RMSD={polish['rmsds'][-1]:.4f} Å  stop={polish['stop_reason']}",
+        flush=True,
+    )
     out = {
         "seed": int(seed),
         "free_nn": float(free["nn_rmsds"][-1]),
@@ -996,10 +1097,27 @@ def run_one(scene, seed: int, *, save_trajectory: bool = False) -> dict:
         "l1_best": float(cleanup["l1_best"]),
         "n_ot_rejects": int(cleanup["n_ot_rejects"]),
         "n_l1_rejects": int(cleanup["n_l1_rejects"]),
+        "atom_factor": float(atom_factor),
+        "n_model": int(n_model),
+        "n_ghosts": int(0 if prune is None else prune.ghost_idx.size),
+        "prune_l1": float("nan" if prune is None else prune.l1),
+        "prune_restr_rms": float(
+            "nan" if prune is None else prune.restraint_rms
+        ),
+        "prune_score": float("nan" if prune is None else prune.score),
+        "n_prune_models": int(0 if prune is None else prune.n_models),
+        "ghost_mask": (
+            None if prune is None
+            else np.asarray(prune.ghost_mask, dtype=bool)
+        ),
+        "kept_idx": (
+            None if prune is None
+            else np.asarray(prune.kept_idx, dtype=np.int64)
+        ),
     }
     if save_trajectory:
         traj = build_label_trajectory(
-            free["poses"], free["energies"], order, asn.perm, named,
+            free["poses"], free["energies"], order, perm_for_traj, named,
             cleanup["poses"], cleanup["energies"],
             polish["poses"], polish["l1_energies"],
         )
@@ -1174,8 +1292,10 @@ def main(
     n_seeds: int = 10,
     seed0: int = 0,
     sequence: str | None = None,
+    atom_factor: float = 1.0,
 ):
     resolution = float(resolution)
+    atom_factor = float(atom_factor)
     tag = f"{resolution:g}".replace(".", "p")
     seq_tuple = None
     if sequence:
@@ -1189,6 +1309,8 @@ def main(
         out_stem = f"peptide_{stem_seq}_ot_name_refine_{tag}A_n{n_seeds}"
     else:
         out_stem = f"leucine_ot_name_refine_{tag}A_n{n_seeds}"
+    if abs(atom_factor - 1.0) > 1e-12:
+        out_stem = f"{out_stem}_x{atom_factor:g}"
 
     print(
         f"building scene @ {resolution:g} Å  "
@@ -1196,9 +1318,11 @@ def main(
         flush=True,
     )
     scene = build_scene(resolution, sequence=seq_tuple)
+    n_model = int(round(atom_factor * scene["n_atoms"]))
     print(
         f"  {scene['label']}  grid half-width ±{scene['half']:.1f} Å  "
-        f"σ={scene['sigma']:.3f} Å  N={scene['n_atoms']}",
+        f"σ={scene['sigma']:.3f} Å  N={scene['n_atoms']}  "
+        f"free_atoms={n_model} (×{atom_factor:g})",
         flush=True,
     )
 
@@ -1206,14 +1330,19 @@ def main(
     for k in range(int(n_seeds)):
         seed = int(seed0) + k
         print(f"\n=== seed {seed} ({k + 1}/{n_seeds}) ===", flush=True)
-        r = run_one(scene, seed)
+        r = run_one(scene, seed, atom_factor=atom_factor)
         results.append(r)
         n_at = scene["n_atoms"]
+        ghost_txt = (
+            "" if r["n_ghosts"] == 0
+            else f" · ghosts {r['n_ghosts']} (L1={r['prune_l1']:.4g})"
+        )
         print(
             f"  free NN {r['free_nn']:.3f} Å ({r['free_steps']} steps) · "
             f"named {r['named_rmsd']:.3f} Å ({r['n_match']}/{n_at}) · "
             f"cleanup final {r['admm_rmsd']:.3f} Å "
-            f"({r['cleanup_steps']} steps, {r.get('cleanup_stop', '?')})",
+            f"({r['cleanup_steps']} steps, {r.get('cleanup_stop', '?')})"
+            f"{ghost_txt}",
             flush=True,
         )
 
@@ -1246,6 +1375,11 @@ def main(
         named_poses=np.stack([r["named"] for r in results], axis=0),
         cleaned_poses=np.stack([r["cleaned"] for r in results], axis=0),
         resolution=np.array(resolution),
+        atom_factor=np.array(atom_factor),
+        n_ghosts=np.array([r["n_ghosts"] for r in results]),
+        prune_l1=np.array([r["prune_l1"] for r in results]),
+        prune_restr_rms=np.array([r["prune_restr_rms"] for r in results]),
+        n_prune_models=np.array([r["n_prune_models"] for r in results]),
     )
     draw_overlay(scene, results, out_stem=out_stem)
     print(f"\nwrote {OUT_DIR / f'{out_stem}.pdf'}")
@@ -1266,6 +1400,10 @@ if __name__ == "__main__":
         "--list-refs", action="store_true",
         help="List crystallographic peptide references and exit.",
     )
+    ap.add_argument(
+        "--atom-factor", type=float, default=1.0,
+        help="Free-atom count multiplier vs chemistry (ghosts pruned before naming).",
+    )
     args = ap.parse_args()
     if args.list_refs:
         if list_peptide_refs is None:
@@ -1281,4 +1419,5 @@ if __name__ == "__main__":
         n_seeds=args.n_seeds,
         seed0=args.seed0,
         sequence=args.sequence,
+        atom_factor=args.atom_factor,
     )

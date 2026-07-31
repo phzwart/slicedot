@@ -5,6 +5,15 @@ Writes PNGs (and matching PDFs) into fig/.  Requires the paper extra:
 
     uv sync --extra paper
     uv run python docs/paper/guide/make_figures.py
+
+Phenol application figures read committed pose caches:
+
+* 24–27  ``fig/cache/phenol_apps.npz``              (extended @ 1.5 Å)
+* 28–31  ``fig/cache/phenol_apps_zigzag_3A.npz``    (zigzag @ 3 Å)
+
+Build or refresh with:
+
+    uv run python docs/paper/guide/build_phenol_apps_cache.py
 """
 from __future__ import annotations
 
@@ -2257,6 +2266,357 @@ def fig_algorithm_overview():
     return fig
 
 
+# ------------------------------------------------------------- phenol apps (§9)
+PHENOL_CACHE = FIG_DIR / "cache" / "phenol_apps.npz"
+PHENOL_CACHE_ZIGZAG_3A = FIG_DIR / "cache" / "phenol_apps_zigzag_3A.npz"
+
+
+def _load_phenol_apps(path: Path | None = None):
+    path = PHENOL_CACHE if path is None else Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"Missing {path}. Build it with:\n"
+            "  uv run python docs/paper/guide/build_phenol_apps_cache.py"
+        )
+    return np.load(path, allow_pickle=True)
+
+
+def _phenol_arrow_tol(data) -> float:
+    """Match tolerance scales with stage width (looser at low resolution)."""
+    sigma = float(np.asarray(data["sigma"]))
+    return float(max(0.35, 0.55 * sigma))
+
+
+def _phenol_extent_limits(data, *Xs, pad=1.4):
+    """Tight ROI around the given poses, clipped to the map extent."""
+    pts = np.concatenate([np.asarray(X, dtype=np.float64) for X in Xs], axis=0)
+    xmin = float(pts[:, 0].min() - pad)
+    xmax = float(pts[:, 0].max() + pad)
+    ymin = float(pts[:, 1].min() - pad)
+    ymax = float(pts[:, 1].max() + pad)
+    ex = np.asarray(data["extent"], dtype=np.float64)
+    return (
+        (max(xmin, ex[0]), min(xmax, ex[1])),
+        (max(ymin, ex[2]), min(ymax, ex[3])),
+    )
+
+
+def _draw_density(ax, data, xlim, ylim):
+    rho = np.asarray(data["rhoT"], dtype=np.float64)
+    extent = list(np.asarray(data["extent"], dtype=np.float64))
+    cmap = LinearSegmentedColormap.from_list(
+        "dens", ["#FAF8F4", "#E8D5B5", "#C45C26"],
+    )
+    ax.imshow(
+        rho, origin="lower", extent=extent, cmap=cmap,
+        vmin=0.0, vmax=float(rho.max()), interpolation="nearest",
+        aspect="equal", zorder=0,
+    )
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.set_aspect("equal")
+    ax.tick_params(labelsize=7)
+
+
+def _draw_bonds(ax, X, bonds, *, color=C_MUTED, lw=1.15, alpha=0.85, zorder=2):
+    X = np.asarray(X, dtype=np.float64)
+    segs = [[X[i], X[j]] for i, j in np.asarray(bonds, dtype=int)]
+    if not segs:
+        return
+    ax.add_collection(LineCollection(
+        segs, colors=color, linewidths=lw, alpha=alpha, zorder=zorder,
+    ))
+
+
+def _draw_atoms(ax, X, *, filled=True, color=C_MU, ms=6.0, zorder=4, mew=1.1):
+    X = np.asarray(X, dtype=np.float64)
+    if filled:
+        ax.plot(
+            X[:, 0], X[:, 1], "o", ms=ms, mfc=color, mec=color,
+            zorder=zorder, clip_on=False,
+        )
+    else:
+        ax.plot(
+            X[:, 0], X[:, 1], "o", ms=ms, mfc="none", mec=color,
+            mew=mew, zorder=zorder, clip_on=False,
+        )
+
+
+def _label_arrows(ax, X_true, X_cur, *, tol=0.35, zorder=5):
+    """Arrows from each true labelled site to the current carrier of that label."""
+    X_true = np.asarray(X_true, dtype=np.float64)
+    X_cur = np.asarray(X_cur, dtype=np.float64)
+    for i in range(len(X_true)):
+        a, b = X_true[i], X_cur[i]
+        dist = float(np.linalg.norm(b - a))
+        ok = dist <= tol
+        color = C_PLAN if ok else C_NU
+        if dist < 0.05:
+            ax.plot(
+                [a[0]], [a[1]], "o", ms=3.2, mfc=color, mec=color, zorder=zorder,
+            )
+            continue
+        ax.annotate(
+            "",
+            xy=(b[0], b[1]),
+            xytext=(a[0], a[1]),
+            arrowprops=dict(
+                arrowstyle="-|>",
+                color=color,
+                lw=1.15,
+                mutation_scale=9,
+                shrinkA=3,
+                shrinkB=3,
+            ),
+            zorder=zorder,
+        )
+
+
+def _highlight_names(ax, X, names, which=("O", "Ce"), *, color=C_INK):
+    names = [str(n) for n in np.asarray(names).tolist()]
+    X = np.asarray(X, dtype=np.float64)
+    for tag in which:
+        if tag not in names:
+            continue
+        i = names.index(tag)
+        ax.text(
+            X[i, 0] + 0.22, X[i, 1] + 0.22, tag,
+            fontsize=7.5, color=color, fontweight="bold", zorder=6,
+        )
+
+
+def _phenol_scene_tag(data) -> str:
+    res = float(np.asarray(data["resolution"]))
+    chain = (
+        str(data["chain"])
+        if "chain" in data.files
+        else "extended"
+    )
+    return f"{chain} @ {res:g} Å"
+
+
+def fig_phenol_density_fit(
+    cache: Path | None = None,
+    stem: str = "24_phenol_density_fit",
+):
+    """What a density-solved phenol pose looks like."""
+    data = _load_phenol_apps(cache)
+    X_true = data["X_true"]
+    bonds = data["bonds"]
+    names = data["names"]
+    tag = _phenol_scene_tag(data)
+    xlim, ylim = _phenol_extent_limits(data, X_true, pad=1.6)
+
+    fig, ax = plt.subplots(figsize=(5.6, 5.2))
+    _draw_density(ax, data, xlim, ylim)
+    _draw_bonds(ax, X_true, bonds, color=C_INK, lw=1.35, alpha=0.9)
+    _draw_atoms(ax, X_true, filled=True, color=C_MU, ms=7.0)
+    _highlight_names(ax, X_true, names)
+    ax.set_xlabel(r"$x$ (Å)")
+    ax.set_ylabel(r"$y$ (Å)")
+    ax.set_title("Target density with the true named model")
+    ax.text(
+        0.02, 0.02,
+        r"solved for density $=$ atoms sit in $\rho_T$"
+        "\n(names / restraints are not part of this picture)",
+        transform=ax.transAxes, ha="left", va="bottom", fontsize=8.2,
+        color=C_INK,
+        bbox=dict(boxstyle="round,pad=0.28", fc="white", ec=C_GRID, alpha=0.92),
+    )
+    fig.suptitle(
+        f"Phenol ({tag}): density fit is a transport problem",
+        fontsize=12, y=1.01,
+    )
+    _save(fig, stem)
+
+
+def fig_phenol_rot180_names(
+    cache: Path | None = None,
+    stem: str = "25_phenol_rot180_names",
+):
+    """180° start → free OT: density OK, labels scrambled (arrows)."""
+    data = _load_phenol_apps(cache)
+    X_true = data["X_true"]
+    X0 = data["X_start_180"]
+    X1 = data["X_free_180"]
+    bonds = data["bonds"]
+    names = data["names"]
+    tag = _phenol_scene_tag(data)
+    tol = _phenol_arrow_tol(data)
+    xlim, ylim = _phenol_extent_limits(data, X_true, X0, X1, pad=1.5)
+
+    fig, axes = plt.subplots(1, 2, figsize=(9.6, 4.6), constrained_layout=True)
+    for ax, X, title in (
+        (
+            axes[0], X0,
+            f"start: 180°, COM-matched\n"
+            f"NN-RMSD {float(data['nn0_180']):.2f} Å · "
+            f"label {float(data['label0_180']):.2f} Å",
+        ),
+        (
+            axes[1], X1,
+            f"free OT (no names, no $P_{{\\mathrm{{restr}}}}$)\n"
+            f"NN-RMSD {float(data['nn_180']):.2f} Å · "
+            f"label {float(data['label_180']):.2f} Å",
+        ),
+    ):
+        _draw_density(ax, data, xlim, ylim)
+        _draw_bonds(ax, X_true, bonds, color="0.55", lw=0.9, alpha=0.45)
+        _draw_atoms(ax, X_true, filled=False, color="0.35", ms=5.5)
+        _draw_bonds(ax, X, bonds, color=C_MU, lw=1.25, alpha=0.9)
+        _draw_atoms(ax, X, filled=True, color=C_MU, ms=6.0)
+        if ax is axes[1]:
+            _label_arrows(ax, X_true, X, tol=tol)
+            _highlight_names(ax, X, names, which=("O", "Ce"))
+            _highlight_names(ax, X_true, names, which=("O",), color=C_MUTED)
+        ax.set_title(title, fontsize=9.5)
+        ax.set_xlabel(r"$x$ (Å)")
+    axes[0].set_ylabel(r"$y$ (Å)")
+    fig.suptitle(
+        f"Massive rotation ({tag}): free OT fills the map, names stay wrong",
+        fontsize=12,
+    )
+    fig.text(
+        0.5, -0.02,
+        "Arrows: each true labelled site → current carrier of that same label "
+        "(orange = mismatch, forest = already correct).",
+        ha="center", va="top", fontsize=8.2, color=C_MUTED,
+    )
+    _save(fig, stem)
+
+
+def fig_phenol_random_landing(
+    cache: Path | None = None,
+    stem: str = "26_phenol_random_landing",
+):
+    """Random scatter → free OT: same density solution, same name problem."""
+    data = _load_phenol_apps(cache)
+    X_true = data["X_true"]
+    X0 = data["X_start_rand"]
+    X1 = data["X_free_rand"]
+    bonds = data["bonds"]
+    names = data["names"]
+    tag = _phenol_scene_tag(data)
+    tol = _phenol_arrow_tol(data)
+    xlim, ylim = _phenol_extent_limits(data, X_true, X0, X1, pad=1.8)
+
+    fig, axes = plt.subplots(1, 2, figsize=(9.6, 4.6), constrained_layout=True)
+    for ax, X, title, show_bonds_cur in (
+        (
+            axes[0], X0,
+            f"random scatter (seed {int(data['seed'])})\n"
+            f"NN-RMSD {float(data['nn0_rand']):.2f} Å · "
+            f"label {float(data['label0_rand']):.2f} Å",
+            False,
+        ),
+        (
+            axes[1], X1,
+            f"free OT landing\n"
+            f"NN-RMSD {float(data['nn_rand']):.2f} Å · "
+            f"label {float(data['label_rand']):.2f} Å",
+            True,
+        ),
+    ):
+        _draw_density(ax, data, xlim, ylim)
+        _draw_bonds(ax, X_true, bonds, color="0.55", lw=0.9, alpha=0.45)
+        _draw_atoms(ax, X_true, filled=False, color="0.35", ms=5.5)
+        if show_bonds_cur:
+            _draw_bonds(ax, X, bonds, color=C_MU, lw=1.25, alpha=0.9)
+        _draw_atoms(ax, X, filled=True, color=C_MU, ms=6.0)
+        if ax is axes[1]:
+            _label_arrows(ax, X_true, X, tol=tol)
+            _highlight_names(ax, X, names, which=("O", "Ce"))
+        ax.set_title(title, fontsize=9.5)
+        ax.set_xlabel(r"$x$ (Å)")
+    axes[0].set_ylabel(r"$y$ (Å)")
+    fig.suptitle(
+        f"Random start ({tag}): same density occupancy (start-agnostic)",
+        fontsize=12,
+    )
+    fig.text(
+        0.5, -0.02,
+        "Label arrows again: density agreement does not imply chemical naming.",
+        ha="center", va="top", fontsize=8.2, color=C_MUTED,
+    )
+    _save(fig, stem)
+
+
+def fig_phenol_namer_rescue(
+    cache: Path | None = None,
+    stem: str = "27_phenol_namer_rescue",
+):
+    """Unlabelled free cloud → Namer → ADMM cleanup."""
+    data = _load_phenol_apps(cache)
+    X_true = data["X_true"]
+    X_free = data["X_shuffled"]
+    X_named = data["X_named"]
+    X_admm = data["X_admm"]
+    bonds = data["bonds"]
+    names = data["names"]
+    tag = _phenol_scene_tag(data)
+    tol = _phenol_arrow_tol(data)
+    xlim, ylim = _phenol_extent_limits(
+        data, X_true, X_free, X_named, X_admm, pad=1.5,
+    )
+
+    panels = [
+        (
+            X_free, False,
+            "unlabelled free cloud\n"
+            f"(shuffled indices after OT)",
+            False,
+        ),
+        (
+            X_named, True,
+            f"after Namer.assign\n"
+            f"label-RMSD {float(data['named_label_rmsd']):.2f} Å · "
+            f"restr {float(data['named_restraint_rms']):.2f}",
+            True,
+        ),
+        (
+            X_admm, True,
+            f"ADMM OT+L1+$P_{{\\mathrm{{restr}}}}$\n"
+            f"RMSD {float(data['admm_rmsd']):.3f} Å",
+            True,
+        ),
+    ]
+
+    fig, axes = plt.subplots(1, 3, figsize=(11.4, 4.2), constrained_layout=True)
+    for ax, (X, draw_bonds_cur, title, arrows) in zip(axes, panels):
+        _draw_density(ax, data, xlim, ylim)
+        _draw_bonds(ax, X_true, bonds, color="0.55", lw=0.85, alpha=0.4)
+        _draw_atoms(ax, X_true, filled=False, color="0.35", ms=5.0)
+        if draw_bonds_cur:
+            _draw_bonds(ax, X, bonds, color=C_MU, lw=1.2, alpha=0.9)
+        _draw_atoms(ax, X, filled=True, color=C_MU, ms=5.8)
+        if arrows:
+            _label_arrows(ax, X_true, X, tol=tol)
+            _highlight_names(ax, X, names, which=("O", "Ce"))
+        ax.set_title(title, fontsize=9.2)
+        ax.set_xlabel(r"$x$ (Å)")
+    axes[0].set_ylabel(r"$y$ (Å)")
+    fig.suptitle(
+        f"Post-hoc naming ({tag}) when no labelled start was given",
+        fontsize=12,
+    )
+    fig.text(
+        0.5, -0.03,
+        r"Namer uses the CIF restraint dictionary (bonds / angles / plane), "
+        r"not the OT dual. Arrows turn forest when labels match.",
+        ha="center", va="top", fontsize=8.2, color=C_MUTED,
+    )
+    _save(fig, stem)
+
+
+def fig_phenol_zigzag_3A_suite():
+    """Same four-panel story for zigzag chain at 3 Å (stems 28–31)."""
+    cache = PHENOL_CACHE_ZIGZAG_3A
+    fig_phenol_density_fit(cache, "28_phenol_zigzag3A_density_fit")
+    fig_phenol_rot180_names(cache, "29_phenol_zigzag3A_rot180_names")
+    fig_phenol_random_landing(cache, "30_phenol_zigzag3A_random_landing")
+    fig_phenol_namer_rescue(cache, "31_phenol_zigzag3A_namer_rescue")
+
+
 def main():
     _style()
     print("Generating guide figures →", FIG_DIR)
@@ -2283,6 +2643,11 @@ def main():
     fig_gather_kernel()
     fig_backend_cost()
     fig_algorithm_overview()
+    fig_phenol_density_fit()
+    fig_phenol_rot180_names()
+    fig_phenol_random_landing()
+    fig_phenol_namer_rescue()
+    fig_phenol_zigzag_3A_suite()
     print("done.")
 
 

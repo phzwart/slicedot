@@ -189,3 +189,87 @@ def test_fibonacci_directions_unit():
     assert U.shape == (48, 3)
     norms = U.norm(dim=1)
     assert torch.allclose(norms, torch.ones_like(norms), atol=1e-12)
+
+
+# ---------------------------------------------------------------- localization
+def test_local_radius_none_matches_baseline(cubic_case):
+    m, X = cubic_case
+    xt = torch.tensor(X)
+    v0 = m(xt, W, SIG).item()
+    v1 = m(xt, W, SIG, local_radius=None).item()
+    assert abs(v0 - v1) < 1e-14
+    assert m.V_vox.ndim == 2 and m.m_vox.ndim == 1
+    assert m.V_vox.shape[0] == m.m_vox.shape[0]
+
+
+def test_large_local_radius_renorm_matches_global(cubic_case):
+    """Soft weights ≈ 1 on support for huge R + renorm → global Tq."""
+    m, X = cubic_case
+    kind0, bal0 = m.cfg.local_kind, m.cfg.local_balance
+    m.cfg.local_kind = "soft"
+    m.cfg.local_balance = "renorm"
+    try:
+        xt = torch.tensor(X)
+        T_global = m.stage(SIG)
+        T_local = m._localized_target_spectrum(xt[None], 1e3, SIG)
+        if T_local.ndim == 3:
+            T_local = T_local[0]
+        err = (T_local - T_global).abs().max().item() / T_global.abs().max().item()
+        assert err < 1e-6, err
+    finally:
+        m.cfg.local_kind, m.cfg.local_balance = kind0, bal0
+
+
+def test_localization_suppresses_distant_target_mass(cubic_case):
+    """Small R zeros target mass when the cloud is far from the map."""
+    m, X = cubic_case
+    kind0, bal0 = m.cfg.local_kind, m.cfg.local_balance
+    m.cfg.local_kind = "soft"
+    m.cfg.local_balance = "unbalanced"
+    try:
+        xt = torch.tensor(X)
+        w_near = m._voxel_weights(xt[None], 4.0)
+        mass_near = float((m.m_vox * w_near[0]).sum().item())
+        assert mass_near > 0.5  # most of the unit-mass map
+
+        Y = X + np.array([40.0, 0.0, 0.0])
+        w_far = m._voxel_weights(torch.tensor(Y)[None], 2.0)
+        mass_far = float((m.m_vox * w_far[0]).sum().item())
+        assert mass_far < 1e-8, mass_far
+
+        T_far = m._localized_target_spectrum(torch.tensor(Y)[None], 2.0, SIG)
+        if T_far.ndim == 3:
+            T_far = T_far[0]
+        assert float(T_far.abs().max().item()) < 1e-8
+    finally:
+        m.cfg.local_kind, m.cfg.local_balance = kind0, bal0
+
+
+def test_local_soft_fd_gradient(cubic_case):
+    """Autograd through soft voxel weights matches finite differences."""
+    m, X = cubic_case
+    kind0, bal0 = m.cfg.local_kind, m.cfg.local_balance
+    m.cfg.local_kind = "soft"
+    m.cfg.local_balance = "unbalanced"
+    try:
+        rng = np.random.default_rng(1)
+        Y = X + 0.4 * rng.standard_normal(X.shape)
+        y = torch.tensor(Y, requires_grad=True)
+        m(y, W, SIG, delta=1e-4, local_radius=4.0).backward()
+        ga = y.grad.numpy()
+        h = 1e-6
+        err = []
+        for i in range(0, len(X), 3):
+            for k in range(3):
+                Yp = Y.copy()
+                Yp[i, k] += h
+                Ym = Y.copy()
+                Ym[i, k] -= h
+                gn = (
+                    m(torch.tensor(Yp), W, SIG, delta=1e-4, local_radius=4.0).item()
+                    - m(torch.tensor(Ym), W, SIG, delta=1e-4, local_radius=4.0).item()
+                ) / (2 * h)
+                err.append(abs(ga[i, k] - gn) / max(abs(gn), 1e-30))
+        assert float(np.median(err)) < 1e-5, float(np.median(err))
+    finally:
+        m.cfg.local_kind, m.cfg.local_balance = kind0, bal0

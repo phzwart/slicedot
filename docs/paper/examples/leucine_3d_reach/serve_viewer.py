@@ -19,11 +19,14 @@ VIEWER = ROOT / "viewer"
 
 
 def main(port: int = 8765, sequence: str = "LRP", resolution: float = 3.0,
-         open_browser: bool = True):
+         open_browser: bool = True, skip_export: bool = False):
     os.chdir(ROOT)
-    # Ensure assets exist
-    from export_viewer_assets import main as export_main
-    export_main(resolution=resolution, sequence=sequence)
+    # Ensure assets exist (skip if trajectory was just attached to structure.json)
+    if not skip_export:
+        from export_viewer_assets import main as export_main
+        export_main(resolution=resolution, sequence=sequence)
+    elif not (VIEWER / "data" / "structure.json").is_file():
+        raise SystemExit("viewer/data/structure.json missing; run without --skip-export")
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
@@ -50,10 +53,15 @@ if __name__ == "__main__":
     ap.add_argument("--sequence", type=str, default="LRP")
     ap.add_argument("--resolution", type=float, default=3.0)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument(
+        "--skip-export", action="store_true",
+        help="Serve existing viewer/data (keeps path trajectory intact).",
+    )
     args = ap.parse_args()
     main(
         port=args.port,
         sequence=args.sequence,
         resolution=args.resolution,
         open_browser=not args.no_browser,
+        skip_export=args.skip_export,
     )

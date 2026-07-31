@@ -59,6 +59,28 @@ __all__ = [
 TWOPI = 2.0 * math.pi
 
 
+def _score_from_spectra(Mq, Tq, qk, keep_idx, dt, P, n_empty, cdtype, delta=0.0):
+    """dif = M-T → H via 1/(2π i q) → pin at n_empty → ∫pen.  Returns (B,).
+
+    ``Mq`` / ``Tq`` are (B,L,K) or Tq may be (L,K).  Shared by ``SlicedOT.forward`` and
+    the windowed path so the FFT-branch / pinning graph stays in one place.
+    """
+    Tq_b = Tq.unsqueeze(0) if Tq.ndim == 2 else Tq
+    dif = Mq - Tq_b
+    denom = 1j * TWOPI * qk * dt
+    nz = qk != 0
+    L = dif.shape[1]
+    A = dif.new_zeros((dif.shape[0], L, P))
+    A[..., keep_idx[nz]] = dif[..., nz] / denom[nz].to(cdtype)
+    H = torch.fft.ifft(A, dim=-1).real
+    H = H - H[..., n_empty : n_empty + 1]
+    if delta > 0.0:
+        pen = delta * (torch.logaddexp(H / delta, -H / delta) - math.log(2.0))
+    else:
+        pen = H.abs()
+    return pen.sum(-1).mean(-1) * dt
+
+
 # --------------------------------------------------------------------------- helpers
 def sigma_from_resolution(d: float) -> float:
     """the report's convention: a Gaussian whose FWHM equals the resolution"""
@@ -167,7 +189,9 @@ class SlicedOT(nn.Module):
         mv = m.reshape(-1)[sel.reshape(-1)]
         mv = mv / mv.sum()
         qk = q[keep]
-        Tq = self._structure_factor_from_voxels(V, mv, U, qk, cdt)
+        # Precompute 1-D voxel projections for fast localized Tq rebuilds.
+        vox_proj = V @ U.T  # (M, L)
+        Tq = self._structure_factor_from_proj(vox_proj, mv, qk, cdt)
 
         sg = config.sigma_grid if config.sigma_grid is not None else 2.0 * dt
         self.register_buffer("q", q)
@@ -178,6 +202,7 @@ class SlicedOT(nn.Module):
         self.register_buffer("centre", centre)
         self.register_buffer("V_vox", V)
         self.register_buffer("m_vox", mv)
+        self.register_buffer("vox_proj", vox_proj)
         self.P, self.dt, self.Lt = P, dt, Lt
         self.n_empty = P // 2
         self.sigma_grid = float(sg)
@@ -188,10 +213,17 @@ class SlicedOT(nn.Module):
     @staticmethod
     def _structure_factor_from_voxels(V, mv, U, qk, cdtype):
         """Structure factor Tq[L,K] = sum_v m_v exp(-2πi q u·r_v)."""
-        Tq = torch.empty((U.shape[0], qk.numel()), dtype=cdtype, device=V.device)
-        for l in range(U.shape[0]):
-            a = V @ U[l]
-            Tq[l] = torch.exp(-1j * TWOPI * qk[:, None] * a[None, :]).to(cdtype) @ mv.to(cdtype)
+        return SlicedOT._structure_factor_from_proj(V @ U.T, mv, qk, cdtype)
+
+    @staticmethod
+    def _structure_factor_from_proj(vox_proj, mv, qk, cdtype):
+        """Structure factor from precomputed projections ``vox_proj`` (M, L)."""
+        L = vox_proj.shape[1]
+        Tq = torch.empty((L, qk.numel()), dtype=cdtype, device=vox_proj.device)
+        mv_c = mv.to(cdtype)
+        for l in range(L):
+            a = vox_proj[:, l]
+            Tq[l] = torch.exp(-1j * TWOPI * qk[:, None] * a[None, :]).to(cdtype) @ mv_c
         return Tq
 
     def _resolve_local_radius(self, local_radius: Optional[float]) -> Optional[float]:
@@ -224,22 +256,26 @@ class SlicedOT(nn.Module):
         B, N, _ = xc.shape
         M = V.shape[0]
         R2 = float(radius) ** 2
-        atom_step = max(1, int(self.cfg.atom_chunk))
-        vox_step = max(1, int(self.cfg.vox_chunk))
         out = xc.new_zeros((B, M))
+        # Full cdist is fine at 1ZDD scale (M~1e4–1e5, N~300); chunk only if huge.
+        max_elem = int(self.cfg.vox_chunk) * max(1, int(self.cfg.atom_chunk))
         for b in range(B):
-            mind2 = V.new_full((M,), float("inf"))
             xb = xc[b]
-            for vs in range(0, M, vox_step):
-                ve = min(vs + vox_step, M)
-                Vs = V[vs:ve]
-                local = Vs.new_full((ve - vs,), float("inf"))
-                for s in range(0, N, atom_step):
-                    e = min(s + atom_step, N)
-                    # (Mc, nchunk)
-                    d2 = torch.cdist(Vs, xb[s:e]).pow(2)
-                    local = torch.minimum(local, d2.min(dim=1).values)
-                mind2[vs:ve] = local
+            if M * N <= max_elem:
+                mind2 = torch.cdist(V, xb).pow(2).min(dim=1).values
+            else:
+                mind2 = V.new_full((M,), float("inf"))
+                vox_step = max(1, int(self.cfg.vox_chunk))
+                atom_step = max(1, int(self.cfg.atom_chunk))
+                for vs in range(0, M, vox_step):
+                    ve = min(vs + vox_step, M)
+                    local = V.new_full((ve - vs,), float("inf"))
+                    Vs = V[vs:ve]
+                    for s in range(0, N, atom_step):
+                        e = min(s + atom_step, N)
+                        d2 = torch.cdist(Vs, xb[s:e]).pow(2)
+                        local = torch.minimum(local, d2.min(dim=1).values)
+                    mind2[vs:ve] = local
             if kind == "hard":
                 out[b] = (mind2 <= R2).to(out.dtype)
             else:
@@ -264,12 +300,12 @@ class SlicedOT(nn.Module):
                 f"got {self.cfg.local_balance!r}"
             )
         B = mv.shape[0]
-        specs = []
-        for b in range(B):
-            Tq = self._structure_factor_from_voxels(
-                self.V_vox, mv[b], self.U, self.qk, self.cdtype,
+        specs = [
+            self._structure_factor_from_proj(
+                self.vox_proj, mv[b], self.qk, self.cdtype,
             )
-            specs.append(Tq)
+            for b in range(B)
+        ]
         Tq = specs[0] if B == 1 else torch.stack(specs, dim=0)
         extra2 = max(sigma ** 2 - self.sigma_data ** 2, 0.0)
         if extra2 > 0.0:
@@ -377,20 +413,9 @@ class SlicedOT(nn.Module):
             Mq = self._model_grid(
                 p, w, torch.exp(-2 * math.pi ** 2 * res2 * self.qk ** 2))
 
-        dif = Mq - Tq_b
-        denom = 1j * TWOPI * self.qk * self.dt
-        nz = self.qk != 0
-        A = dif.new_zeros((dif.shape[0], self.n_dirs, self.P))
-        A[..., self.keep_idx[nz]] = dif[..., nz] / denom[nz].to(self.cdtype)
-        H = torch.fft.ifft(A, dim=-1).real
-        H = H - H[..., self.n_empty : self.n_empty + 1]
-
-        if delta > 0.0:
-            pen = delta * (torch.logaddexp(H / delta, -H / delta)
-                           - math.log(2.0))
-        else:
-            pen = H.abs()
-        val = pen.sum(-1).mean(-1) * self.dt
+        val = _score_from_spectra(
+            Mq, Tq_b, self.qk, self.keep_idx, self.dt, self.P, self.n_empty,
+            self.cdtype, delta)
         return val[0] if squeeze else val
 
     # -------------------------------------------------------- deformation oracle
@@ -591,7 +616,8 @@ class CrystalSlicedOT(SlicedOT):
         qk = q[keep]
 
         U = fibonacci_directions(config.n_dirs, dtype=dtype).to(m.device)
-        Tq = SlicedOT._structure_factor_from_voxels(V, mv, U, qk, cdt)
+        vox_proj = V @ U.T
+        Tq = SlicedOT._structure_factor_from_proj(vox_proj, mv, qk, cdt)
 
         self.register_buffer("q", q)
         self.register_buffer("qk", qk)
@@ -601,6 +627,7 @@ class CrystalSlicedOT(SlicedOT):
         self.register_buffer("centre", centre)
         self.register_buffer("V_vox", V)
         self.register_buffer("m_vox", mv)
+        self.register_buffer("vox_proj", vox_proj)
         self.register_buffer("O", O)
         self.P, self.dt, self.Lt = P, dt, Lt
         self.n_empty = P // 2

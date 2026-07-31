@@ -20,7 +20,12 @@ OUT = ROOT / "out"
 DATA = ROOT / "viewer" / "data"
 
 
-def main(sequence: str = "AFSSFN", resolution: float = 2.75, seed: int = 0):
+def main(
+    sequence: str = "AFSSFN",
+    resolution: float = 2.75,
+    seed: int = 0,
+    atom_factor: float = 1.0,
+):
     raw = sequence.replace("-", ",").upper()
     parts = tuple(s.strip() for s in raw.split(",") if s.strip())
     if len(parts) == 1 and all(c in "ACDEFGHIKLMNPQRSTVWY" for c in parts[0]):
@@ -30,10 +35,13 @@ def main(sequence: str = "AFSSFN", resolution: float = 2.75, seed: int = 0):
     print(f"building scene {''.join(seq)} @ {resolution:g} Å …", flush=True)
     scene = build_scene(resolution, sequence=seq)
     print(
-        f"  {scene['label']}  N={scene['n_atoms']}  running seed {seed} …",
+        f"  {scene['label']}  N={scene['n_atoms']}  ×{atom_factor:g}  "
+        f"running seed {seed} …",
         flush=True,
     )
-    r = run_one(scene, seed, save_trajectory=True)
+    r = run_one(
+        scene, seed, atom_factor=float(atom_factor), save_trajectory=True,
+    )
     traj = r["trajectory"]
     coords = traj["coords"]
     stages = traj["stages"]
@@ -96,6 +104,9 @@ def main(sequence: str = "AFSSFN", resolution: float = 2.75, seed: int = 0):
         "free_stop": r.get("free_stop"),
         "cleanup_stop": r.get("cleanup_stop"),
         "polish_stop": r.get("polish_stop"),
+        "atom_factor": float(atom_factor),
+        "n_ghosts": int(r.get("n_ghosts", 0)),
+        "prune_l1": r.get("prune_l1"),
     }
     (DATA / "structure.json").write_text(json.dumps(structure) + "\n")
 
@@ -117,5 +128,11 @@ if __name__ == "__main__":
     ap.add_argument("--sequence", type=str, default="AFSSFN")
     ap.add_argument("--resolution", type=float, default=2.75)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--atom-factor", type=float, default=1.0)
     args = ap.parse_args()
-    main(sequence=args.sequence, resolution=args.resolution, seed=args.seed)
+    main(
+        sequence=args.sequence,
+        resolution=args.resolution,
+        seed=args.seed,
+        atom_factor=args.atom_factor,
+    )

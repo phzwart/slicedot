@@ -37,12 +37,14 @@ dependencies = [
 dev = ["pytest>=7.0"]
 paper = [
     "matplotlib>=3.7",
+    "scikit-image>=0.21",
 ]
 
 [dependency-groups]
 dev = ["pytest>=7.0"]
 paper = [
     "matplotlib>=3.7",
+    "scikit-image>=0.21",
 ]
 
 [project.urls]

@@ -103,7 +103,7 @@
       <label>True model overlay</label>
       <div class="row">
         <button id="btn-true" type="button">Off</button>
-        <button id="btn-true-on" type="button">On</button>
+        <button id="btn-true-on" class="active true-on" type="button">On</button>
       </div>
       <div class="stat" style="margin-top:0.4rem;color:var(--muted)">
         <span class="swatch" style="background:#ff0d0d"></span>free atoms
@@ -122,8 +122,8 @@
       <label>Isovalue <span class="val" id="iso-val">—</span></label>
       <input id="iso" type="range" min="0" max="100" value="50" />
 
-      <label>Density opacity <span class="val" id="iso-op-val">0.25</span></label>
-      <input id="iso-op" type="range" min="5" max="100" value="25" />
+      <label>Density opacity <span class="val" id="iso-op-val">0.12</span></label>
+      <input id="iso-op" type="range" min="5" max="100" value="12" />
 
       <label>Atom color</label>
       <div class="row">
@@ -164,7 +164,7 @@
     let mode = "ref";       // ref | path | ens
     let colorBy = "elem";
     let showIso = true;
-    let showTrue = false;
+    let showTrue = true;
     let volumeData = null;  // parsed once; re-adding cube text every frame freezes play
     let workCoords = null;  // current working coords (Nx3)
     let playTimer = null;
@@ -174,9 +174,10 @@
       el.classList.add(cls);
     }
 
-    // Unlabelled free-atom style — bright against green density.
-    const FREE_ATOM_COLOR = "#ff3b30";
-    const FREE_ATOM_RADIUS = 0.75;
+    // Unlabelled free atoms — opaque cores that punch through the green map.
+    const FREE_ATOM_COLOR = "#ff4d00";
+    const FREE_ATOM_RADIUS = 0.48;
+    const FREE_ATOM_RIM = "#fff4d6";
 
     function atomColor(atom) {
       if (colorBy === "res") return RES_COLOR[atom.resn] || "#cccccc";
@@ -206,12 +207,12 @@
       for (let i = 0; i < coords.length; i++) {
         const p = coords[i];
         const center = { x: p[0], y: p[1], z: p[2] };
-        // Soft halo so atoms stay visible inside the green isosurface.
+        // Thin light rim for contrast (not a soft glow that washes out the true model).
         viewer.addSphere({
           center,
-          radius: FREE_ATOM_RADIUS * 1.55,
-          color: FREE_ATOM_COLOR,
-          opacity: Math.min(0.22, opacity * 0.25),
+          radius: FREE_ATOM_RADIUS * 1.18,
+          color: FREE_ATOM_RIM,
+          opacity: 0.55,
         });
         viewer.addSphere({
           center,
@@ -276,13 +277,13 @@
       viewer.removeAllShapes();
       viewer.removeAllModels();
 
-      // Density first, atoms after — otherwise the isosurface depth-writes
-      // over free atoms that have entered the map.
+      const stage = currentPathStage();
+      const freeStage = mode === "path" && isFreeAtomStage(stage);
+
+      // Density first, atoms after — opacity stays fixed across free/named stages.
       drawDensity();
 
-      const stage = currentPathStage();
-      if (mode === "path" && isFreeAtomStage(stage)) {
-        // Pre-naming: unlabelled free atoms, no chemistry.
+      if (freeStage) {
         drawFreeAtoms(workCoords, { opacity: 1.0 });
       } else {
         drawMolecule(workCoords, {
@@ -293,13 +294,13 @@
         });
       }
 
-      // True model overlay (always chemical / topology).
+      // True model overlay — drawn last, thicker so it reads through density.
       if (showTrue) {
         drawMolecule(structure.true_coords, {
           colorOverride: "#9ecbff",
-          bondRadius: 0.06,
-          atomScale: 0.14,
-          opacity: 0.85,
+          bondRadius: 0.14,
+          atomScale: 0.32,
+          opacity: 1.0,
           showBonds: true,
         });
       }
@@ -464,6 +465,12 @@
       setWorkCoordsFromMode();
       zoomForMode();
       rebuild();
+      // First paint can miss shapes until the canvas has a real size; reflow once.
+      requestAnimationFrame(() => {
+        viewer.resize();
+        zoomForMode();
+        rebuild();
+      });
 
       $("btn-ref").onclick = () => {
         stopPlay();
