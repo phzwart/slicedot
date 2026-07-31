@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>1ZDD · atom placement viewer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.4.2/3Dmol-min.js"></script>
+  <style>
+    :root {
+      --bg: #121212;
+      --panel: #1a1a1a;
+      --text: #e8e4dc;
+      --muted: #9a958c;
+      --line: #2c2c2c;
+      --accent: #d4a574;
+      --true: #9ecbff;
+      --start: #ff5a45;
+      --final: #f0c14a;
+      --box: #6a6a6a;
+      --match: #7dcea0;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%;
+      background: var(--bg); color: var(--text);
+      font: 14px/1.4 "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      height: 100%;
+    }
+    aside {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 1.1rem 1rem;
+      overflow: auto;
+    }
+    h1 {
+      font-size: 1.05rem; font-weight: 600; margin: 0 0 0.2rem;
+      letter-spacing: 0.02em;
+    }
+    .sub { color: var(--muted); font-size: 0.82rem; margin-bottom: 1rem; }
+    label {
+      display: block; font-size: 0.72rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em; margin: 1rem 0 0.35rem;
+    }
+    .row { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; }
+    button {
+      background: #262626; color: var(--text); border: 1px solid #3a3a3a;
+      border-radius: 5px; padding: 0.38rem 0.65rem; cursor: pointer;
+      font: inherit;
+    }
+    button:hover { border-color: var(--accent); }
+    button.active { background: #353028; border-color: var(--accent); color: var(--accent); }
+    button:disabled { opacity: 0.4; cursor: default; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .val { color: var(--accent); font-variant-numeric: tabular-nums; }
+    .stat { margin: 0.18rem 0; font-size: 0.85rem; }
+    .stat b { color: var(--text); font-weight: 500; }
+    .swatch {
+      display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+      margin-right: 0.3rem; vertical-align: middle;
+    }
+    .layer {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 0.5rem; margin: 0.35rem 0;
+      padding: 0.35rem 0.45rem; border: 1px solid var(--line); border-radius: 5px;
+    }
+    .layer span { font-size: 0.86rem; }
+    .layer button { padding: 0.2rem 0.55rem; font-size: 0.8rem; }
+    .hint {
+      margin-top: 1.2rem; padding-top: 0.9rem; border-top: 1px solid var(--line);
+      color: var(--muted); font-size: 0.78rem;
+    }
+    #viewer {
+      width: 100%; height: 100%; position: relative;
+      background: #0e0e0e;
+    }
+    .preset-note {
+      color: var(--muted); font-size: 0.78rem; margin-top: 0.35rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h1 id="title">Loading…</h1>
+      <div class="sub" id="subtitle">Uniform box start → free-atom OT</div>
+
+      <div class="stat">Resolution <b id="res">—</b></div>
+      <div class="stat">Atoms <b id="natoms">—</b></div>
+      <div class="stat">Box half-width <b id="boxhalf">—</b></div>
+      <div class="stat">NN-RMSD start → final <b id="nn">—</b></div>
+
+      <label>View preset</label>
+      <div class="row">
+        <button id="preset-start" type="button">Start in box</button>
+        <button id="preset-final" type="button">OT result</button>
+        <button id="preset-compare" class="active" type="button">Compare</button>
+      </div>
+      <div class="preset-note" id="preset-note">
+        True structure + final OT atoms + NN matches
+      </div>
+
+      <label>Layers</label>
+      <div class="layer">
+        <span><span class="swatch" style="background:var(--box)"></span>Map box</span>
+        <button id="tog-box" class="active" type="button">On</button>
+      </div>
+      <div class="layer">
+        <span><span class="swatch" style="background:#3cb371"></span>Density</span>
+        <button id="tog-iso" class="active" type="button">On</button>
+      </div>
+      <div class="layer">
+        <span><span class="swatch" style="background:var(--true)"></span>True (bonded)</span>
+        <button id="tog-true" class="active" type="button">On</button>
+      </div>
+      <div class="layer">
+        <span><span class="swatch" style="background:var(--start)"></span>Uniform start</span>
+        <button id="tog-start" type="button">Off</button>
+      </div>
+      <div class="layer">
+        <span><span class="swatch" style="background:var(--final)"></span>OT final</span>
+        <button id="tog-final" class="active" type="button">On</button>
+      </div>
+      <div class="layer">
+        <span><span class="swatch" style="background:var(--match)"></span>NN matches</span>
+        <button id="tog-nn" class="active" type="button">On</button>
+      </div>
+
+      <label>Working cloud</label>
+      <div class="row">
+        <button id="cloud-start" type="button">Start</button>
+        <button id="cloud-final" class="active" type="button">Final</button>
+        <button id="cloud-path" type="button">Trajectory</button>
+      </div>
+
+      <label>Frame <span class="val" id="frame-val">1</span>
+        <span class="val" id="frame-metric" style="margin-left:0.35rem;color:var(--muted)"></span>
+      </label>
+      <input id="frame" type="range" min="1" max="1" value="1" disabled />
+      <div class="row" style="margin-top:0.4rem">
+        <button id="btn-play" type="button" disabled>Play</button>
+        <button id="btn-pause" type="button" disabled>Pause</button>
+      </div>
+
+      <label>Isovalue <span class="val" id="iso-val">—</span></label>
+      <input id="iso" type="range" min="0" max="100" value="45" />
+
+      <label>Density opacity <span class="val" id="iso-op-val">0.22</span></label>
+      <input id="iso-op" type="range" min="5" max="80" value="22" />
+
+      <div class="hint">
+        Uniform start: N atoms drawn independently in the map box
+        (same count and electron weights as the true model).<br/><br/>
+        NN-RMSD is Hungarian matching — assignment, not chemical labels.<br/><br/>
+        Drag rotate · scroll zoom · shift-drag pan.
+      </div>
+    </aside>
+    <div id="viewer"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    let meta = null;
+    let structure = null;
+    let viewer = null;
+    let volumeData = null;
+
+    let showBox = true;
+    let showIso = true;
+    let showTrue = true;
+    let showStart = false;
+    let showFinal = true;
+    let showNN = true;
+    let cloudMode = "final"; // start | final | path
+    let playTimer = null;
+
+    const START_COLOR = "#ff5a45";
+    const FINAL_COLOR = "#f0c14a";
+    const TRUE_COLOR = "#9ecbff";
+    const BOX_COLOR = "#888888";
+    const MATCH_COLOR = "#7dcea0";
+
+    function setToggle(btn, on) {
+      btn.textContent = on ? "On" : "Off";
+      btn.classList.toggle("active", on);
+    }
+
+    function currentIso() {
+      const t = Number($("iso").value) / 100;
+      return meta.iso_low * Math.pow(meta.iso_high / meta.iso_low, t);
+    }
+
+    function drawBox() {
+      if (!showBox || !structure.box) return;
+      const c = structure.box.center;
+      const h = structure.box.half;
+      const corners = [];
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+        corners.push([c[0] + sx * h, c[1] + sy * h, c[2] + sz * h]);
+      }
+      const edges = [
+        [0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7],
+      ];
+      for (const [a, b] of edges) {
+        const A = corners[a], B = corners[b];
+        viewer.addCylinder({
+          start: { x: A[0], y: A[1], z: A[2] },
+          end: { x: B[0], y: B[1], z: B[2] },
+          radius: 0.06,
+          color: BOX_COLOR,
+          opacity: 0.55,
+          fromCap: 1,
+          toCap: 1,
+        });
+      }
+    }
+
+    function drawDensity() {
+      if (!showIso || !volumeData) return;
+      const iso = currentIso();
+      const op = Number($("iso-op").value) / 100;
+      $("iso-val").textContent = iso.toExponential(2);
+      $("iso-op-val").textContent = op.toFixed(2);
+      viewer.addIsosurface(volumeData, {
+        isoval: iso,
+        color: "#3cb371",
+        opacity: op,
+      });
+    }
+
+    function drawMolecule(coords, {
+      color = TRUE_COLOR,
+      bondRadius = 0.08,
+      atomScale = 0.18,
+      opacity = 0.9,
+      showBonds = true,
+    } = {}) {
+      const atoms = structure.atoms;
+      if (showBonds) {
+        for (const [a, b] of structure.bonds) {
+          const ca = coords[a], cb = coords[b];
+          viewer.addCylinder({
+            start: { x: ca[0], y: ca[1], z: ca[2] },
+            end: { x: cb[0], y: cb[1], z: cb[2] },
+            radius: bondRadius,
+            color,
+            opacity,
+            fromCap: 1,
+            toCap: 1,
+          });
+        }
+      }
+      for (let i = 0; i < atoms.length; i++) {
+        const p = coords[i];
+        viewer.addSphere({
+          center: { x: p[0], y: p[1], z: p[2] },
+          radius: atomScale,
+          color,
+          opacity,
+        });
+      }
+    }
+
+    function drawFreeAtoms(coords, color, radius = 0.22, opacity = 0.85) {
+      for (let i = 0; i < coords.length; i++) {
+        const p = coords[i];
+        viewer.addSphere({
+          center: { x: p[0], y: p[1], z: p[2] },
+          radius,
+          color,
+          opacity,
+        });
+      }
+    }
+
+    function drawNN(pairs, fromCoords, toCoords) {
+      if (!showNN || !pairs) return;
+      for (const [i, j] of pairs) {
+        const a = fromCoords[i], b = toCoords[j];
+        viewer.addCylinder({
+          start: { x: a[0], y: a[1], z: a[2] },
+          end: { x: b[0], y: b[1], z: b[2] },
+          radius: 0.035,
+          color: MATCH_COLOR,
+          opacity: 0.55,
+          fromCap: 1,
+          toCap: 1,
+        });
+      }
+    }
+
+    function activeCloudCoords() {
+      if (cloudMode === "start") return structure.start_coords;
+      if (cloudMode === "path" && structure.path_coords && structure.path_coords.length) {
+        const f = Math.max(0, Math.min(
+          structure.path_coords.length - 1,
+          Number($("frame").value) - 1,
+        ));
+        return structure.path_coords[f];
+      }
+      return structure.final_coords;
+    }
+
+    function activeNNPairs() {
+      if (cloudMode === "start" || (cloudMode === "path" && Number($("frame").value) === 1)) {
+        return structure.nn_start_pairs;
+      }
+      return structure.nn_final_pairs;
+    }
+
+    function rebuild() {
+      viewer.removeAllShapes();
+      viewer.removeAllModels();
+      drawDensity();
+      drawBox();
+      if (showTrue) {
+        drawMolecule(structure.true_coords, {
+          color: TRUE_COLOR,
+          bondRadius: 0.07,
+          atomScale: 0.16,
+          opacity: 0.88,
+        });
+      }
+
+      // Uniform start cloud
+      if (showStart) {
+        const primary = cloudMode === "start";
+        drawFreeAtoms(
+          structure.start_coords, START_COLOR,
+          primary ? 0.22 : 0.16,
+          primary ? 0.85 : 0.40,
+        );
+        if (primary) {
+          drawNN(structure.nn_start_pairs, structure.start_coords, structure.true_coords);
+        }
+      }
+
+      // OT cloud (final or trajectory frame)
+      if (showFinal || cloudMode === "path") {
+        let cloud;
+        if (cloudMode === "path" && structure.path_coords && structure.path_coords.length) {
+          const f = Math.max(0, Math.min(
+            structure.path_coords.length - 1,
+            Number($("frame").value) - 1,
+          ));
+          cloud = structure.path_coords[f];
+        } else {
+          cloud = structure.final_coords;
+        }
+        const primary = cloudMode === "final" || cloudMode === "path";
+        drawFreeAtoms(
+          cloud, FINAL_COLOR,
+          primary ? 0.22 : 0.16,
+          primary ? 0.85 : 0.40,
+        );
+        if (primary) {
+          drawNN(activeNNPairs(), cloud, structure.true_coords);
+        }
+      }
+
+      viewer.render();
+      updateFrameMetric();
+    }
+
+    function updateFrameMetric() {
+      if (cloudMode !== "path" || !structure.path_nn_rmsd) {
+        $("frame-metric").textContent = "";
+        return;
+      }
+      const f = Number($("frame").value) - 1;
+      const nn = structure.path_nn_rmsd[f];
+      const E = structure.path_energy ? structure.path_energy[f] : null;
+      let s = `NN ${nn.toFixed(3)} Å`;
+      if (E != null && Number.isFinite(E)) s += ` · E=${E.toExponential(2)}`;
+      $("frame-metric").textContent = s;
+    }
+
+    function configurePath() {
+      const has = structure.path_coords && structure.path_coords.length > 1;
+      $("cloud-path").disabled = !has;
+      $("frame").disabled = !(has && cloudMode === "path");
+      $("btn-play").disabled = !(has && cloudMode === "path");
+      $("btn-pause").disabled = !(has && cloudMode === "path");
+      if (!has) return;
+      $("frame").max = String(structure.path_coords.length);
+      $("frame-val").textContent = $("frame").value;
+    }
+
+    function applyPreset(name) {
+      if (name === "start") {
+        showBox = true; showIso = true; showTrue = false;
+        showStart = true; showFinal = false; showNN = false;
+        cloudMode = "start";
+        $("preset-note").textContent =
+          "Uniform random atoms filling the map box (no chemistry yet)";
+      } else if (name === "final") {
+        showBox = true; showIso = true; showTrue = true;
+        showStart = false; showFinal = true; showNN = true;
+        cloudMode = "final";
+        $("preset-note").textContent =
+          "True structure + OT final cloud + Hungarian NN matches";
+      } else {
+        showBox = true; showIso = true; showTrue = true;
+        showStart = true; showFinal = true; showNN = true;
+        cloudMode = "final";
+        $("preset-note").textContent =
+          "Start (faint red) vs OT final (gold) vs true (blue)";
+      }
+      setToggle($("tog-box"), showBox);
+      setToggle($("tog-iso"), showIso);
+      setToggle($("tog-true"), showTrue);
+      setToggle($("tog-start"), showStart);
+      setToggle($("tog-final"), showFinal);
+      setToggle($("tog-nn"), showNN);
+      ["cloud-start", "cloud-final", "cloud-path"].forEach((id) =>
+        $(id).classList.remove("active"));
+      $(cloudMode === "start" ? "cloud-start"
+        : cloudMode === "path" ? "cloud-path" : "cloud-final").classList.add("active");
+      ["preset-start", "preset-final", "preset-compare"].forEach((id) =>
+        $(id).classList.remove("active"));
+      $(name === "start" ? "preset-start"
+        : name === "final" ? "preset-final" : "preset-compare").classList.add("active");
+      configurePath();
+      rebuild();
+    }
+
+    function wire() {
+      $("tog-box").onclick = () => { showBox = !showBox; setToggle($("tog-box"), showBox); rebuild(); };
+      $("tog-iso").onclick = () => { showIso = !showIso; setToggle($("tog-iso"), showIso); rebuild(); };
+      $("tog-true").onclick = () => { showTrue = !showTrue; setToggle($("tog-true"), showTrue); rebuild(); };
+      $("tog-start").onclick = () => { showStart = !showStart; setToggle($("tog-start"), showStart); rebuild(); };
+      $("tog-final").onclick = () => { showFinal = !showFinal; setToggle($("tog-final"), showFinal); rebuild(); };
+      $("tog-nn").onclick = () => { showNN = !showNN; setToggle($("tog-nn"), showNN); rebuild(); };
+
+      $("preset-start").onclick = () => applyPreset("start");
+      $("preset-final").onclick = () => applyPreset("final");
+      $("preset-compare").onclick = () => applyPreset("compare");
+
+      $("cloud-start").onclick = () => {
+        cloudMode = "start"; showStart = true;
+        setToggle($("tog-start"), true);
+        ["cloud-start", "cloud-final", "cloud-path"].forEach((id) => $(id).classList.remove("active"));
+        $("cloud-start").classList.add("active");
+        configurePath(); rebuild();
+      };
+      $("cloud-final").onclick = () => {
+        cloudMode = "final"; showFinal = true;
+        setToggle($("tog-final"), true);
+        ["cloud-start", "cloud-final", "cloud-path"].forEach((id) => $(id).classList.remove("active"));
+        $("cloud-final").classList.add("active");
+        configurePath(); rebuild();
+      };
+      $("cloud-path").onclick = () => {
+        cloudMode = "path"; showFinal = true;
+        setToggle($("tog-final"), true);
+        ["cloud-start", "cloud-final", "cloud-path"].forEach((id) => $(id).classList.remove("active"));
+        $("cloud-path").classList.add("active");
+        configurePath(); rebuild();
+      };
+
+      $("frame").oninput = () => {
+        $("frame-val").textContent = $("frame").value;
+        rebuild();
+      };
+      $("iso").oninput = () => rebuild();
+      $("iso-op").oninput = () => rebuild();
+
+      $("btn-play").onclick = () => {
+        if (playTimer) return;
+        playTimer = setInterval(() => {
+          const max = Number($("frame").max);
+          let v = Number($("frame").value) + 1;
+          if (v > max) v = 1;
+          $("frame").value = String(v);
+          $("frame-val").textContent = String(v);
+          rebuild();
+        }, 80);
+      };
+      $("btn-pause").onclick = () => {
+        if (playTimer) { clearInterval(playTimer); playTimer = null; }
+      };
+    }
+
+    async function boot() {
+      const [metaR, structR, cubeR] = await Promise.all([
+        fetch("data/meta.json"),
+        fetch("data/structure.json"),
+        fetch("data/density.cube"),
+      ]);
+      meta = await metaR.json();
+      structure = await structR.json();
+      const cubeText = await cubeR.text();
+
+      $("title").textContent = meta.label;
+      $("subtitle").textContent =
+        `${meta.n_residues} residues · seed ${meta.seed} · ${meta.n_steps} OT steps`;
+      $("res").textContent = `${meta.resolution.toFixed(2)} Å  (σ=${meta.sigma.toFixed(3)})`;
+      $("natoms").textContent = String(meta.n_atoms);
+      $("boxhalf").textContent = `${meta.box_half.toFixed(2)} Å`;
+      $("nn").textContent =
+        `${meta.nn_rmsd_start.toFixed(2)} → ${meta.nn_rmsd_final.toFixed(2)} Å`;
+
+      viewer = $3Dmol.createViewer($("viewer"), {
+        backgroundColor: "#0e0e0e",
+        antialias: true,
+      });
+      volumeData = new $3Dmol.VolumeData(cubeText, "cube");
+
+      wire();
+      applyPreset("compare");
+      viewer.zoomTo();
+      viewer.render();
+    }
+
+    boot().catch((err) => {
+      $("title").textContent = "Failed to load";
+      $("subtitle").textContent = String(err);
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
