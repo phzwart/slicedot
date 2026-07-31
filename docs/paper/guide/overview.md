@@ -574,7 +574,7 @@ route the field already uses.
 The preceding sections derived each piece. Assembled, the pipeline is the
 figure below (regenerated with the rest of the guide via `make_figures.py`):
 
-![Algorithmic overview of slicedot](fig/00_algorithm_overview.png)
+![Algorithmic overview of slicedot](fig/23_algorithm_overview.png)
 
 Read top to bottom:
 

@@ -14,7 +14,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import to_rgb
 from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch, Rectangle
+from matplotlib.path import Path as MplPath
 from scipy.optimize import linear_sum_assignment
 from scipy.special import erf
 
@@ -1436,152 +1438,828 @@ def fig_backend_cost():
 
 
 def fig_algorithm_overview():
-    """End-to-end algorithmic overview of slicedot."""
-    fig, ax = plt.subplots(figsize=(12.8, 9.2))
-    ax.set_xlim(0, 128)
-    ax.set_ylim(0, 92)
+    """End-to-end algorithmic overview of SlicedOT."""
+
+    fig, ax = plt.subplots(figsize=(13.2, 9.0))
+    fig.patch.set_facecolor(C_BG)
+    ax.set_facecolor(C_BG)
+    ax.set_xlim(0, 132)
+    ax.set_ylim(0, 94)
     ax.axis("off")
 
-    def box(x, y, w, h, text, *, fc=C_BG, ec=C_INK, tc=C_INK, fs=9,
-            lw=1.5, weight="normal"):
-        ax.add_patch(FancyBboxPatch(
-            (x, y), w, h, boxstyle="round,pad=0.25,rounding_size=0.6",
-            facecolor=fc, edgecolor=ec, linewidth=lw, zorder=2))
-        ax.text(x + w / 2, y + h / 2, text, ha="center", va="center",
-                fontsize=fs, color=tc, fontweight=weight,
-                linespacing=1.3, zorder=3)
+    def tint(color, amount=0.90):
+        """Blend a project color toward white while preserving palette coherence."""
+        r, g, b = to_rgb(color)
+        return (
+            r + (1.0 - r) * amount,
+            g + (1.0 - g) * amount,
+            b + (1.0 - b) * amount,
+        )
 
-    def arrow(x1, y1, x2, y2, *, c=C_INK, lw=1.45):
-        ax.add_patch(FancyArrowPatch(
-            (x1, y1), (x2, y2), arrowstyle="-|>", mutation_scale=13,
-            color=c, lw=lw, shrinkA=1, shrinkB=1, zorder=4))
+    # ------------------------------------------------------------------
+    # Drawing primitives
+    # ------------------------------------------------------------------
+    def rounded_panel(
+        x,
+        y,
+        w,
+        h,
+        *,
+        fc="white",
+        ec=None,
+        lw=0.9,
+        radius=0.9,
+        zorder=1,
+    ):
+        if ec is None:
+            ec = tint(C_MUTED, 0.72)
+        patch = FancyBboxPatch(
+            (x, y),
+            w,
+            h,
+            boxstyle=f"round,pad=0.0,rounding_size={radius}",
+            facecolor=fc,
+            edgecolor=ec,
+            linewidth=lw,
+            zorder=zorder,
+        )
+        ax.add_patch(patch)
+        return patch
 
-    def lane(y, h, label, fc):
-        ax.add_patch(Rectangle((1, y), 126, h, facecolor=fc, edgecolor="none",
-                               alpha=0.40, zorder=0))
-        ax.text(2.4, y + h / 2, label, ha="left", va="center", fontsize=8,
-                color=C_MUTED, fontweight="bold", rotation=90, zorder=1)
+    def lane(y, h, label, *, fc, accent):
+        # Left gutter for a vertical section title; content cards sit to its right.
+        gutter = 4.2
+        rounded_panel(
+            5,
+            y,
+            122,
+            h,
+            fc=fc,
+            ec=accent,
+            lw=0.8,
+            radius=1.1,
+            zorder=0,
+        )
+        # Soft vertical rule separating the title strip from the body.
+        ax.plot(
+            [5 + gutter, 5 + gutter],
+            [y + 1.1, y + h - 1.1],
+            color=accent,
+            lw=0.8,
+            alpha=0.28,
+            zorder=1,
+        )
+        # Font size scales down for long titles so they fit the lane height.
+        nchar = len(label.replace("$", "").replace(r"\ell", "l").replace("\\", ""))
+        fs = 8.0 if nchar <= 18 else (7.2 if nchar <= 28 else 6.4)
+        ax.text(
+            5 + 0.55 * gutter,
+            y + 0.5 * h,
+            label,
+            ha="center",
+            va="center",
+            rotation=90,
+            fontsize=fs,
+            color=accent,
+            fontweight="bold",
+            zorder=2,
+        )
 
-    # Lanes from bottom to top.
-    lane(1.5, 16.5, "UPDATE", "#E8EEE8")
-    lane(20.0, 18.5, "READINGS", "#F3E9E1")
-    lane(40.5, 28.0, "FORWARD", "#E4EEF2")
-    lane(70.5, 15.0, "INPUTS", "#ECEAE4")
+    def input_card(x, y, w, h, kicker, title, body, *, accent, fc):
+        rounded_panel(
+            x,
+            y,
+            w,
+            h,
+            fc=fc,
+            ec=accent,
+            lw=1.05,
+            radius=0.8,
+            zorder=2,
+        )
+        ax.add_patch(
+            Rectangle(
+                (x, y + h - 0.52),
+                w,
+                0.52,
+                facecolor=accent,
+                edgecolor="none",
+                zorder=3,
+            )
+        )
+        ax.text(
+            x + 1.45,
+            y + h - 1.45,
+            kicker,
+            ha="left",
+            va="center",
+            fontsize=6.6,
+            color=accent,
+            fontweight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x + 1.45,
+            y + h - 3.0,
+            title,
+            ha="left",
+            va="center",
+            fontsize=8.7,
+            color=C_INK,
+            fontweight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x + 1.45,
+            y + 1.25,
+            body,
+            ha="left",
+            va="bottom",
+            fontsize=7.55,
+            color=C_MUTED,
+            linespacing=1.22,
+            zorder=4,
+        )
 
-    ax.text(64, 90.0,
-            "Algorithmic overview: sliced $W_1$ as a structure-factor computation",
-            ha="center", va="center", fontsize=13.5, fontweight="bold", color=C_INK)
-    ax.text(64, 87.5,
-            "force reaches  ·  Monge supplies length  ·  FFT evaluates both",
-            ha="center", va="center", fontsize=9.5, color=C_MUTED)
+    def step_card(
+        x,
+        y,
+        w,
+        h,
+        number,
+        title,
+        body,
+        *,
+        accent,
+        fc="white",
+        body_fs=7.7,
+    ):
+        rounded_panel(
+            x,
+            y,
+            w,
+            h,
+            fc=fc,
+            ec=accent,
+            lw=1.1,
+            radius=0.85,
+            zorder=2,
+        )
+        rounded_panel(
+            x + 1.25,
+            y + h - 3.1,
+            3.0,
+            2.05,
+            fc=accent,
+            ec=accent,
+            lw=0.0,
+            radius=0.55,
+            zorder=3,
+        )
+        ax.text(
+            x + 2.75,
+            y + h - 2.08,
+            str(number),
+            ha="center",
+            va="center",
+            fontsize=8.2,
+            color="white",
+            fontweight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x + 5.1,
+            y + h - 2.05,
+            title,
+            ha="left",
+            va="center",
+            fontsize=8.5,
+            color=C_INK,
+            fontweight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x + 1.55,
+            y + h - 4.15,
+            body,
+            ha="left",
+            va="top",
+            fontsize=body_fs,
+            color=C_INK,
+            linespacing=1.28,
+            zorder=4,
+        )
 
-    # ---- INPUTS  (y=72..83)
-    box(12, 72, 24, 11,
-        "Density map\n$\\rho_T$, origin, spacing\n$\\sigma_{\\mathrm{data}}$",
-        fc="#F7F3EC", ec=C_NU, tc=C_NU, fs=8.5, weight="bold")
-    box(42, 72, 24, 11,
-        "Atomic model\n$r_j\\in\\mathbb{R}^3$, $w_j$\nstage width $\\sigma$",
-        fc="#EAF2F5", ec=C_MU, tc=C_MU, fs=8.5, weight="bold")
-    box(72, 72, 22, 11,
-        "Directions $u_\\ell$\nFibonacci / semicircle\ncount $L$",
-        fc="#F0F0F0", ec=C_MUTED, fs=8.5, weight="bold")
-    box(100, 72, 20, 11,
-        "Backend\ndirect | grid\n$\\sigma_g,\\Delta t,P$",
-        fc="#F0F0F0", ec=C_MUTED, fs=8.5, weight="bold")
+    def strip_card(
+        x,
+        y,
+        w,
+        h,
+        number,
+        title,
+        formula,
+        *,
+        accent,
+        fc,
+        formula_offset=15.0,
+        formula_fs=8.4,
+    ):
+        rounded_panel(
+            x,
+            y,
+            w,
+            h,
+            fc=fc,
+            ec=accent,
+            lw=1.25,
+            radius=0.75,
+            zorder=2,
+        )
+        rounded_panel(
+            x + 1.0,
+            y + 0.72,
+            3.0,
+            h - 1.44,
+            fc=accent,
+            ec=accent,
+            lw=0.0,
+            radius=0.45,
+            zorder=3,
+        )
+        ax.text(
+            x + 2.5,
+            y + h / 2,
+            str(number),
+            ha="center",
+            va="center",
+            fontsize=8.2,
+            color="white",
+            fontweight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x + 5.1,
+            y + h / 2,
+            title,
+            ha="left",
+            va="center",
+            fontsize=8.3,
+            color=accent,
+            fontweight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x + formula_offset,
+            y + h / 2,
+            formula,
+            ha="left",
+            va="center",
+            fontsize=formula_fs,
+            color=C_INK,
+            zorder=4,
+        )
 
-    # ---- FORWARD steps 1–3  (y=55..66)
-    box(10, 55, 30, 11,
-        "1  Target slices (once)\n"
-        "$T_\\ell(q)=\\sum_v m_v "
-        "e^{-2\\pi i q\\,u_\\ell\\cdot(r_v-c)}$\n"
-        "stage blur as $q$-multiplier",
-        fc="white", ec=C_NU, fs=8)
-    box(48, 55, 28, 11,
-        "2  Project atoms\n"
-        "$p_{\\ell j}=u_\\ell\\cdot(r_j-c)$",
-        fc="white", ec=C_MU, fs=9)
-    box(84, 55, 34, 11,
-        "3  Model spectrum $M_\\ell(q)$\n"
-        "direct SF  or  scatter $g_{\\sigma_g}$\n"
-        "FFT  $\\times$  residual $f_{\\mathrm{res}}(q)$",
-        fc="white", ec=C_PLAN, fs=8)
+    def formula_card(x, y, w, h, number, title, formula, note, *, accent, fc):
+        """Two-level card for a long formula plus a short side condition."""
+        rounded_panel(
+            x,
+            y,
+            w,
+            h,
+            fc=fc,
+            ec=accent,
+            lw=1.25,
+            radius=0.78,
+            zorder=2,
+        )
+        rounded_panel(
+            x + 1.0,
+            y + h - 3.05,
+            3.0,
+            2.05,
+            fc=accent,
+            ec=accent,
+            lw=0.0,
+            radius=0.45,
+            zorder=3,
+        )
+        ax.text(
+            x + 2.5,
+            y + h - 2.02,
+            str(number),
+            ha="center",
+            va="center",
+            fontsize=8.2,
+            color="white",
+            fontweight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x + 5.1,
+            y + h - 2.0,
+            title,
+            ha="left",
+            va="center",
+            fontsize=8.35,
+            color=accent,
+            fontweight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x + 5.1,
+            y + 1.85,
+            formula,
+            ha="left",
+            va="center",
+            fontsize=8.35,
+            color=C_INK,
+            zorder=4,
+        )
+        ax.text(
+            x + w - 1.8,
+            y + h - 2.0,
+            note,
+            ha="right",
+            va="center",
+            fontsize=7.55,
+            color=C_MUTED,
+            zorder=4,
+        )
 
-    arrow(24, 72, 24, 66.2, c=C_NU)
-    arrow(54, 72, 62, 66.2, c=C_MU)
-    arrow(83, 72, 62, 66.2, c=C_MUTED)
-    arrow(110, 72, 101, 66.2, c=C_MUTED)
-    arrow(40, 60.5, 47.7, 60.5)
-    arrow(76, 60.5, 83.7, 60.5)
+    def readout_card(x, y, w, h, title, subtitle, rows, *, accent, fc):
+        rounded_panel(
+            x,
+            y,
+            w,
+            h,
+            fc=fc,
+            ec=accent,
+            lw=1.25,
+            radius=0.9,
+            zorder=2,
+        )
+        ax.add_patch(
+            Rectangle(
+                (x, y + h - 0.58),
+                w,
+                0.58,
+                facecolor=accent,
+                edgecolor="none",
+                zorder=3,
+            )
+        )
+        ax.text(
+            x + 1.6,
+            y + h - 1.75,
+            title,
+            ha="left",
+            va="center",
+            fontsize=9.0,
+            color=accent,
+            fontweight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x + 1.6,
+            y + h - 3.1,
+            subtitle,
+            ha="left",
+            va="center",
+            fontsize=7.25,
+            color=C_MUTED,
+            fontweight="bold",
+            zorder=4,
+        )
 
-    # Step 4  (y=48..53.5)
-    box(22, 48, 84, 5.5,
-        "4  Spectral antiderivative   "
-        r"$H_\ell=\mathcal{F}^{-1}[(M_\ell-T_\ell)/(2\pi i q)]$"
-        r"   then pin   $H\leftarrow H-H[n_{\mathrm{empty}}]$",
-        fc="white", ec=C_INK, fs=8.5)
-    arrow(25, 55, 48, 53.7, c=C_NU)
-    arrow(101, 55, 80, 53.7, c=C_PLAN)
+        # Distribute rows over the available vertical space. This keeps the
+        # three-row Monge card visually balanced against the four-row force card.
+        top = y + h - 5.15
+        bottom = y + 1.85
+        gap = 0.0 if len(rows) == 1 else (top - bottom) / (len(rows) - 1)
+        for i, (tag, text, fs) in enumerate(rows):
+            yy = top - i * gap
+            rounded_panel(
+                x + 1.55,
+                yy - 0.72,
+                3.25,
+                1.65,
+                fc=accent,
+                ec=accent,
+                lw=0.0,
+                radius=0.45,
+                zorder=3,
+            )
+            ax.text(
+                x + 3.17,
+                yy + 0.10,
+                tag,
+                ha="center",
+                va="center",
+                fontsize=6.5,
+                color="white",
+                fontweight="bold",
+                zorder=4,
+            )
+            ax.text(
+                x + 5.55,
+                yy + 0.08,
+                text,
+                ha="left",
+                va="center",
+                fontsize=fs,
+                color=C_INK,
+                zorder=4,
+            )
 
-    # Score  (y=42..46.5)
-    box(38, 42, 52, 4.5,
-        "5  Score   "
-        r"$E=\frac{1}{L}\sum_\ell\int|H_\ell|\,dt$"
-        "    (or log-cosh)",
-        fc="#E8EEE8", ec=C_PLAN, tc=C_PLAN, fs=10, weight="bold", lw=2.0)
-    arrow(64, 48, 64, 46.7)
+    def protocol_panel(x, y, w, h):
+        rounded_panel(
+            x,
+            y,
+            w,
+            h,
+            fc="white",
+            ec=C_INK,
+            lw=1.15,
+            radius=0.9,
+            zorder=2,
+        )
+        widths = [37.0, 37.0, w - 74.0]
+        starts = [x, x + widths[0], x + widths[0] + widths[1]]
+        accents = [C_PLAN, C_NU, C_INK]
+        titles = ["REACH", "MOVE", "RESTRAIN + HAND OFF"]
+        bodies = [
+            r"Use $\nabla E$ to enter the basin"
+            + "\n"
+            + r"sign force remains $O(1)$",
+            r"Use Monge $v_j$"
+            + "\n"
+            + r"or Adam / ADMM on $\nabla E$",
+            r"Apply $P_{\mathrm{restr}}$ to chemistry"
+            + "\n"
+            + "switch to conventional refinement in-basin",
+        ]
 
-    # ---- READINGS  (y=21.5..37.5)
-    box(8, 21.5, 52, 16,
-        "FORCE  —  dual / search gradient\n\n"
-        r"6a  $s_\ell=\mathrm{sgn}(H_\ell)$   (or $\tanh$)"
-        "\n"
-        r"6b  $\psi_\ell$ on $e^{-2\pi i q p}$ branch "
-        r"$\times f_{\mathrm{res}}$"
-        "\n"
-        r"6c  gather with $g$ (not $g'$) $\rightarrow\phi_{\ell j}$"
-        "\n"
-        r"6d  $\nabla_{r_j}E="
-        r"\frac{1}{L}\sum_\ell w_j\phi_{\ell j}u_\ell$",
-        fc="white", ec=C_PLAN, fs=8.2, lw=1.8)
-    box(68, 21.5, 52, 16,
-        "LENGTH  —  sliced Monge step\n\n"
-        r"7a  $\delta_{\ell j}="
-        r"F^{-1}_{P_{u_\ell}\nu}(F_{P_{u_\ell}\mu}(p_{\ell j}))"
-        r"-p_{\ell j}$"
-        "\n"
-        r"7b  $\tilde{v}_j=\frac{1}{L}\sum_\ell\delta_{\ell j}u_\ell$"
-        "\n"
-        r"7c  $M=\frac{1}{L}\sum_\ell u_\ell u_\ell^T$"
-        r"$,\ \ v_j=M^{-1}\tilde{v}_j$",
-        fc="white", ec=C_NU, fs=8.2, lw=1.8)
+        for i, (sx, sw, accent, title, body) in enumerate(
+            zip(starts, widths, accents, titles, bodies)
+        ):
+            if i > 0:
+                ax.plot(
+                    [sx, sx],
+                    [y + 1.0, y + h - 1.0],
+                    color=tint(C_MUTED, 0.76),
+                    lw=0.9,
+                    zorder=3,
+                )
+            ax.text(
+                sx + 2.0,
+                y + h - 2.0,
+                title,
+                ha="left",
+                va="center",
+                fontsize=7.4,
+                color=accent,
+                fontweight="bold",
+                zorder=4,
+            )
+            ax.text(
+                sx + 2.0,
+                y + h - 4.0,
+                body,
+                ha="left",
+                va="top",
+                fontsize=7.25,
+                color=C_INK,
+                linespacing=1.28,
+                zorder=4,
+            )
 
-    # Same H feeds both readings.
-    arrow(50, 42, 34, 37.7, c=C_PLAN)
-    arrow(78, 42, 94, 37.7, c=C_NU)
+        for xx in [x + widths[0], x + widths[0] + widths[1]]:
+            ax.text(
+                xx,
+                y + h / 2,
+                "›",
+                ha="center",
+                va="center",
+                fontsize=18,
+                color=tint(C_MUTED, 0.58),
+                zorder=5,
+                bbox=dict(facecolor="white", edgecolor="none", pad=0.0),
+            )
 
-    # ---- UPDATE  (y=3..16)
-    box(18, 3.0, 92, 13.5,
-        "UPDATE / PROTOCOL\n\n"
-        r"reach with $\nabla E$   "
-        "(sign force stays $O(1)$ under misplacement)"
-        "\n"
-        r"step with Monge $v_j$   —   or Adam/ADMM on $\nabla E$ "
-        "with an external step size"
-        "\n"
-        r"restrain chemistry ($P_{\mathrm{restr}}$)  ·  "
-        "hand off to conventional refinement once in-basin",
-        fc="white", ec=C_INK, fs=8.7, lw=2.0)
+    def arrow(x1, y1, x2, y2, *, c=C_INK, lw=1.35, ms=12):
+        ax.add_patch(
+            FancyArrowPatch(
+                (x1, y1),
+                (x2, y2),
+                arrowstyle="-|>",
+                mutation_scale=ms,
+                color=c,
+                lw=lw,
+                shrinkA=1.0,
+                shrinkB=1.0,
+                zorder=6,
+            )
+        )
 
-    arrow(34, 21.5, 48, 16.7, c=C_PLAN, lw=1.7)
-    arrow(94, 21.5, 80, 16.7, c=C_NU, lw=1.7)
+    def elbow_arrow(points, *, c=C_INK, lw=1.25, ms=11):
+        path = MplPath(points, [MplPath.MOVETO] + [MplPath.LINETO] * (len(points) - 1))
+        ax.add_patch(
+            FancyArrowPatch(
+                path=path,
+                arrowstyle="-|>",
+                mutation_scale=ms,
+                color=c,
+                lw=lw,
+                zorder=6,
+            )
+        )
 
-    _save(fig, "00_algorithm_overview")
+    def pill(x, y, w, text, *, fc, tc):
+        rounded_panel(
+            x,
+            y,
+            w,
+            2.55,
+            fc=fc,
+            ec=fc,
+            lw=0.0,
+            radius=1.25,
+            zorder=2,
+        )
+        ax.text(
+            x + w / 2,
+            y + 1.28,
+            text,
+            ha="center",
+            va="center",
+            fontsize=7.15,
+            color=tc,
+            fontweight="bold",
+            zorder=3,
+        )
+
+    # ------------------------------------------------------------------
+    # Title and high-level visual key
+    # ------------------------------------------------------------------
+    ax.text(
+        66,
+        91.0,
+        "Algorithmic overview: sliced $W_1$ as a structure-factor computation",
+        ha="center",
+        va="center",
+        fontsize=14.0,
+        fontweight="bold",
+        color=C_INK,
+    )
+    pill(30.5, 86.6, 21.5, "FORCE  ·  reach", fc=tint(C_PLAN, 0.88), tc=C_PLAN)
+    pill(55.2, 86.6, 21.5, "MONGE  ·  length", fc=tint(C_NU, 0.88), tc=C_NU)
+    pill(79.9, 86.6, 21.5, "FFT  ·  evaluate", fc=tint(C_MU, 0.88), tc=C_MU)
+
+    # ------------------------------------------------------------------
+    # Lanes
+    # ------------------------------------------------------------------
+    lane(70.5, 14.2, "INPUTS", fc=tint(C_MUTED, 0.94), accent=C_MUTED)
+    lane(42.0, 26.4, "FORWARD COMPUTATION", fc=tint(C_MU, 0.94), accent=C_MU)
+    lane(
+        20.0,
+        20.0,
+        "STEPS",
+        fc=tint(C_NU, 0.95),
+        accent=C_NU,
+    )
+    lane(2.5, 15.0, "UPDATES", fc=tint(C_PLAN, 0.94), accent=C_PLAN)
+
+    # ------------------------------------------------------------------
+    # Inputs
+    # ------------------------------------------------------------------
+    input_card(
+        11.5,
+        72.1,
+        24.5,
+        9.6,
+        "TARGET",
+        "Density map",
+        r"$\rho_T$  ·  origin  ·  spacing" + "\n" + r"$\sigma_{\mathrm{data}}$",
+        accent=C_NU,
+        fc=tint(C_NU, 0.95),
+    )
+    input_card(
+        39.5,
+        72.1,
+        24.5,
+        9.6,
+        "MODEL",
+        "Atomic model",
+        r"$r_j\in\mathbb{R}^3$  ·  $w_j$" + "\n" + r"stage width $\sigma$",
+        accent=C_MU,
+        fc=tint(C_MU, 0.95),
+    )
+    input_card(
+        67.5,
+        72.1,
+        24.5,
+        9.6,
+        "SAMPLING",
+        r"Directions $u_\ell$",
+        "Fibonacci / semicircle" + "\n" + r"count $L$",
+        accent=C_MUTED,
+        fc="white",
+    )
+    input_card(
+        95.5,
+        72.1,
+        24.5,
+        9.6,
+        "EXECUTION",
+        "Backend",
+        "direct  |  grid" + "\n" + r"$\sigma_g,\;\Delta t,\;P$",
+        accent=C_MUTED,
+        fc="white",
+    )
+
+    # ------------------------------------------------------------------
+    # Forward computation
+    # ------------------------------------------------------------------
+    step_card(
+        11.5,
+        55.0,
+        33,
+        10.4,
+        1,
+        "TARGET SLICES  ·  precompute",
+        r"$T_\ell(q)=\sum_v m_v e^{-2\pi i q\,u_\ell\cdot(r_v-c)}$"
+        + "\n"
+        + r"apply stage blur as a $q$-space multiplier",
+        accent=C_NU,
+        body_fs=7.45,
+    )
+    step_card(
+        49,
+        55.0,
+        28,
+        10.4,
+        2,
+        "PROJECT ATOMS",
+        r"$p_{\ell j}=u_\ell\cdot(r_j-c)$"
+        + "\n"
+        + "shared by the spectral and Monge paths",
+        accent=C_MU,
+        body_fs=7.55,
+    )
+    step_card(
+        82,
+        55.0,
+        40,
+        10.4,
+        3,
+        r"MODEL SPECTRUM  $M_\ell(q)$",
+        "direct structure factors"
+        + "\n"
+        + r"or scatter $g_{\sigma_g}$  $\rightarrow$  FFT  $\times$  $f_{\mathrm{res}}(q)$",
+        accent=C_PLAN,
+        body_fs=7.45,
+    )
+
+    formula_card(
+        22,
+        47.1,
+        88,
+        6.0,
+        4,
+        "SPECTRAL ANTIDERIVATIVE",
+        r"$H_\ell=\mathcal{F}^{-1}[(M_\ell-T_\ell)/(2\pi i q)]$",
+        r"pin:  $H\leftarrow H-H[n_{\mathrm{empty}}]$",
+        accent=C_INK,
+        fc="white",
+    )
+
+    strip_card(
+        37,
+        42.7,
+        58,
+        3.65,
+        5,
+        "SCORE",
+        r"$E=\frac{1}{L}\sum_\ell\int |H_\ell|\,dt$   (or log-cosh)",
+        accent=C_PLAN,
+        fc=tint(C_PLAN, 0.89),
+    )
+
+    # Inputs -> forward computation.
+    arrow(22.5, 72.1, 22.5, 65.6, c=C_NU)
+    elbow_arrow(
+        [(51.5, 72.1), (51.5, 69.6), (57.0, 69.6), (57.0, 65.6)],
+        c=C_MU,
+    )
+    elbow_arrow(
+        [(80.5, 72.1), (80.5, 68.9), (69.0, 68.9), (69.0, 65.6)],
+        c=C_MUTED,
+    )
+    elbow_arrow(
+        [(109.5, 72.1), (109.5, 68.9), (105.0, 68.9), (105.0, 65.6)],
+        c=C_MUTED,
+    )
+
+    # Internal forward dependencies.
+    arrow(77.0, 60.2, 81.8, 60.2, c=C_MU)
+    elbow_arrow(
+        [(27.0, 55.0), (27.0, 53.8), (43.0, 53.8), (43.0, 53.25)],
+        c=C_NU,
+    )
+    elbow_arrow(
+        [(102.0, 55.0), (102.0, 53.8), (91.0, 53.8), (91.0, 53.25)],
+        c=C_PLAN,
+    )
+    arrow(66.0, 47.1, 66.0, 46.5, c=C_INK)
+
+    # ------------------------------------------------------------------
+    # Two readings of H_l
+    # ------------------------------------------------------------------
+    force_rows = [
+        ("6a", r"$s_\ell=\mathrm{sgn}(H_\ell)$   (or $\tanh$)", 7.55),
+        (
+            "6b",
+            r"build $\psi_\ell$ on the $e^{-2\pi iqp}$ branch $\times f_{\mathrm{res}}$",
+            7.25,
+        ),
+        ("6c", r"gather with $g$ (not $g'$) $\rightarrow \phi_{\ell j}$", 7.45),
+        (
+            "6d",
+            r"$\nabla_{r_j}E=\frac{1}{L}\sum_\ell w_j\phi_{\ell j}u_\ell$",
+            7.55,
+        ),
+    ]
+    length_rows = [
+        (
+            "7a",
+            r"$\delta_{\ell j}=F^{-1}_{P_{u_\ell}\nu}(F_{P_{u_\ell}\mu}(p_{\ell j}))-p_{\ell j}$",
+            7.05,
+        ),
+        ("7b", r"$\tilde v_j=\frac{1}{L}\sum_\ell \delta_{\ell j}u_\ell$", 7.55),
+        (
+            "7c",
+            r"$M=\frac{1}{L}\sum_\ell u_\ell u_\ell^T$,   $v_j=M^{-1}\tilde v_j$",
+            7.35,
+        ),
+    ]
+
+    readout_card(
+        11.5,
+        22.0,
+        50.5,
+        14.8,
+        "FORCE",
+        "dual / search gradient",
+        force_rows,
+        accent=C_PLAN,
+        fc="white",
+    )
+    readout_card(
+        70,
+        22.0,
+        52,
+        14.8,
+        "LENGTH",
+        "sliced Monge step",
+        length_rows,
+        accent=C_NU,
+        fc="white",
+    )
+
+    # The same H feeds both interpretations.
+    elbow_arrow(
+        [(52.0, 42.7), (52.0, 39.2), (36.0, 39.2), (36.0, 36.95)],
+        c=C_PLAN,
+    )
+    elbow_arrow(
+        [(80.0, 42.7), (80.0, 39.2), (96.0, 39.2), (96.0, 36.95)],
+        c=C_NU,
+    )
+
+    # ------------------------------------------------------------------
+    # Update protocol
+    # ------------------------------------------------------------------
+    protocol_panel(11.5, 4.1, 110.5, 9.5)
+    elbow_arrow(
+        [(36.0, 22.0), (36.0, 18.65), (28.5, 18.65), (28.5, 13.8)],
+        c=C_PLAN,
+        lw=1.55,
+        ms=12,
+    )
+    elbow_arrow(
+        [(96.0, 22.0), (96.0, 18.65), (65.5, 18.65), (65.5, 13.8)],
+        c=C_NU,
+        lw=1.55,
+        ms=12,
+    )
+
+    _save(fig, "23_algorithm_overview")
+    return fig
 
 
 def main():
     _style()
     print("Generating guide figures →", FIG_DIR)
-    fig_algorithm_overview()
     fig_1d_densities()
     fig_1d_cdf_and_w1()
     fig_1d_monotone_map()
@@ -1604,6 +2282,7 @@ def main():
     fig_scatter_fft_pipeline()
     fig_gather_kernel()
     fig_backend_cost()
+    fig_algorithm_overview()
     print("done.")
 
 
