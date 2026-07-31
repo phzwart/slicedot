@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="slicedot.png" alt="SliceDOT" width="520">
+</p>
+
 # slicedot
 
 Sliced Wasserstein-1 targets for fitting atomic models into density maps, computed as a structure-factor problem in reciprocal space.
