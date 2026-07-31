@@ -55,6 +55,7 @@ htmlcov/
 *.parquet
 *.feather
 *.gif
+!docs/paper/examples/**/out/*movie*.gif
 *.mp4
 *.avi
 *.webm
@@ -74,7 +75,8 @@ docs/**/*.fls
 docs/**/*.fdb_latexmk
 docs/**/*.synctex.gz
 
-# Regenerable paper-example outputs (keep out/.gitkeep via nested ignore)
+# Regenerable paper-example outputs (keep out/.gitkeep and movies)
 docs/paper/examples/**/out/*
 !docs/paper/examples/**/out/.gitignore
 !docs/paper/examples/**/out/.gitkeep
+!docs/paper/examples/**/out/*movie*.gif
