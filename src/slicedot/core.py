@@ -103,6 +103,11 @@ class SlicedOTConfig:
     n_sigma: float = 4.0                # kernel truncation, in sigma_grid
     atom_chunk: int = 512               # cap on materialised phase array
     map_cutoff: float = 1e-6            # drop target voxels below this fraction of the max
+    # Soft-truncated / unbalanced localization (None = global balanced target).
+    local_radius: Optional[float] = None  # Å; reweight voxels by proximity to model
+    local_kind: str = "soft"              # "soft" | "hard"
+    local_balance: str = "unbalanced"     # "unbalanced" | "renorm"
+    vox_chunk: int = 4096                 # voxel chunk for distance / structure factor
 
     def as_dict(self):
         return asdict(self)
@@ -112,9 +117,9 @@ class SlicedOTConfig:
 class SlicedOT(nn.Module):
     """Sliced W1 between a static sampled map and a Gaussian-mixture model.
 
-    The map is consumed once at construction and reduced to L one-dimensional slices;
-    the map itself is not retained.  ``state_dict`` therefore carries everything needed
-    to score a model, which is what makes this servable.
+    The map is reduced to L one-dimensional slices via structure factors.  Kept
+    voxels ``V_vox`` / ``m_vox`` are retained so a soft-truncated target spectrum
+    can be rebuilt each forward when ``local_radius`` is set.
 
     forward(x, w, sigma) -> (B,) losses.  Differentiable in x and w.
     """
@@ -162,10 +167,7 @@ class SlicedOT(nn.Module):
         mv = m.reshape(-1)[sel.reshape(-1)]
         mv = mv / mv.sum()
         qk = q[keep]
-        Tq = torch.empty((config.n_dirs, qk.numel()), dtype=cdt, device=m.device)
-        for l in range(config.n_dirs):                       # one direction at a time
-            a = V @ U[l]
-            Tq[l] = torch.exp(-1j * TWOPI * qk[:, None] * a[None, :]).to(cdt) @ mv.to(cdt)
+        Tq = self._structure_factor_from_voxels(V, mv, U, qk, cdt)
 
         sg = config.sigma_grid if config.sigma_grid is not None else 2.0 * dt
         self.register_buffer("q", q)
@@ -174,11 +176,106 @@ class SlicedOT(nn.Module):
         self.register_buffer("U", U)
         self.register_buffer("Tq", Tq)
         self.register_buffer("centre", centre)
+        self.register_buffer("V_vox", V)
+        self.register_buffer("m_vox", mv)
         self.P, self.dt, self.Lt = P, dt, Lt
         self.n_empty = P // 2
         self.sigma_grid = float(sg)
         self.n_dirs = config.n_dirs
         self.q_nyquist = float(qn)
+
+    # -------------------------------------------------------- localization helpers
+    @staticmethod
+    def _structure_factor_from_voxels(V, mv, U, qk, cdtype):
+        """Structure factor Tq[L,K] = sum_v m_v exp(-2πi q u·r_v)."""
+        Tq = torch.empty((U.shape[0], qk.numel()), dtype=cdtype, device=V.device)
+        for l in range(U.shape[0]):
+            a = V @ U[l]
+            Tq[l] = torch.exp(-1j * TWOPI * qk[:, None] * a[None, :]).to(cdtype) @ mv.to(cdtype)
+        return Tq
+
+    def _resolve_local_radius(self, local_radius: Optional[float]) -> Optional[float]:
+        """``forward(..., local_radius=R)`` overrides config; both None → global."""
+        if local_radius is not None:
+            return float(local_radius)
+        if self.cfg.local_radius is None:
+            return None
+        return float(self.cfg.local_radius)
+
+    def _voxel_weights(self, x: torch.Tensor, radius: float) -> torch.Tensor:
+        """Soft/hard proximity weights for kept voxels.
+
+        Parameters
+        ----------
+        x : (B, N, 3) absolute Cartesian atom positions
+        radius : localization radius in Å
+
+        Returns
+        -------
+        weights : (B, M) in [0, 1], multiplied into ``m_vox``
+        """
+        if radius <= 0.0:
+            raise ValueError("local_radius must be positive")
+        kind = self.cfg.local_kind
+        if kind not in ("soft", "hard"):
+            raise ValueError(f"local_kind must be 'soft' or 'hard', got {kind!r}")
+        xc = x - self.centre
+        V = self.V_vox
+        B, N, _ = xc.shape
+        M = V.shape[0]
+        R2 = float(radius) ** 2
+        atom_step = max(1, int(self.cfg.atom_chunk))
+        vox_step = max(1, int(self.cfg.vox_chunk))
+        out = xc.new_zeros((B, M))
+        for b in range(B):
+            mind2 = V.new_full((M,), float("inf"))
+            xb = xc[b]
+            for vs in range(0, M, vox_step):
+                ve = min(vs + vox_step, M)
+                Vs = V[vs:ve]
+                local = Vs.new_full((ve - vs,), float("inf"))
+                for s in range(0, N, atom_step):
+                    e = min(s + atom_step, N)
+                    # (Mc, nchunk)
+                    d2 = torch.cdist(Vs, xb[s:e]).pow(2)
+                    local = torch.minimum(local, d2.min(dim=1).values)
+                mind2[vs:ve] = local
+            if kind == "hard":
+                out[b] = (mind2 <= R2).to(out.dtype)
+            else:
+                out[b] = torch.exp(-mind2 / (2.0 * R2))
+        return out
+
+    def _localized_target_spectrum(
+        self, x: torch.Tensor, radius: float, sigma: float,
+    ) -> torch.Tensor:
+        """Rebuild Tq from voxels reweighted by proximity to ``x``.
+
+        Returns (L, K) when B==1, else (B, L, K).  Differentiable in ``x`` through
+        the soft kernel (hard truncation has zero gradient almost everywhere).
+        """
+        wgt = self._voxel_weights(x, radius)              # (B, M)
+        mv = self.m_vox.unsqueeze(0) * wgt                # (B, M)
+        if self.cfg.local_balance == "renorm":
+            mv = mv / mv.sum(dim=-1, keepdim=True).clamp_min(1e-30)
+        elif self.cfg.local_balance != "unbalanced":
+            raise ValueError(
+                f"local_balance must be 'unbalanced' or 'renorm', "
+                f"got {self.cfg.local_balance!r}"
+            )
+        B = mv.shape[0]
+        specs = []
+        for b in range(B):
+            Tq = self._structure_factor_from_voxels(
+                self.V_vox, mv[b], self.U, self.qk, self.cdtype,
+            )
+            specs.append(Tq)
+        Tq = specs[0] if B == 1 else torch.stack(specs, dim=0)
+        extra2 = max(sigma ** 2 - self.sigma_data ** 2, 0.0)
+        if extra2 > 0.0:
+            blur = torch.exp(-2 * math.pi ** 2 * extra2 * self.qk ** 2).to(self.cdtype)
+            Tq = Tq * blur
+        return Tq
 
     # ------------------------------------------------------------------- staging
     def stage(self, sigma: float) -> torch.Tensor:
@@ -223,12 +320,18 @@ class SlicedOT(nn.Module):
     # ------------------------------------------------------------------- forward
     def forward(self, x: torch.Tensor, w: torch.Tensor, sigma: Optional[float] = None,
                 Tq: Optional[torch.Tensor] = None,
-                delta: float = 0.0) -> torch.Tensor:
+                delta: float = 0.0,
+                local_radius: Optional[float] = None) -> torch.Tensor:
         """x (N,3) or (B,N,3); w (N,) or (B,N).  Returns (B,) sliced-W1 values.
 
         delta > 0 substitutes the log-cosh surrogate for |H|, which removes the kinks at
         the zero crossings of H.  Those kinks are why finite-difference checks on the
         exact objective show occasional 1e-5 excursions against a 1e-10 median.
+
+        local_radius overrides ``cfg.local_radius`` for annealing.  When set (arg or
+        config), the target spectrum is rebuilt from voxels soft-/hard-weighted by
+        proximity to the model cloud.  With ``local_balance='unbalanced'`` the weighted
+        target is not renormalized, so unmatched map mass contributes to ∫|H|.
         """
         squeeze = x.ndim == 2
         if squeeze:
@@ -236,7 +339,12 @@ class SlicedOT(nn.Module):
         if w.ndim == 1:
             w = w.expand(x.shape[0], -1)
         sigma = self.sigma_data if sigma is None else float(sigma)
-        Tq = self.stage(sigma) if Tq is None else Tq
+        R = self._resolve_local_radius(local_radius)
+        if Tq is None:
+            if R is not None:
+                Tq = self._localized_target_spectrum(x, R, sigma)
+            else:
+                Tq = self.stage(sigma)
 
         p = (x - self.centre) @ self.U.T                       # (B,N,L)
         p = p.transpose(1, 2).contiguous()                     # (B,L,N)
@@ -245,13 +353,21 @@ class SlicedOT(nn.Module):
         backend = self.cfg.backend
         if backend == "auto":
             backend = "grid" if x.shape[1] >= 64 else "direct"
+        # Broadcast (L,K) -> (1,L,K); localized batched Tq is already (B,L,K).
+        Tq_b = Tq.unsqueeze(0) if Tq.ndim == 2 else Tq
         if backend == "grid_custom":
-            res2 = max(sigma ** 2 - self.sigma_grid ** 2, 0.0)
-            return _GridOT.apply(
-                p, w, self.qk, self.keep_idx,
-                torch.exp(-2 * math.pi ** 2 * res2 * self.qk ** 2), Tq, self.dt,
-                self.P, self.n_empty, self.sigma_grid, self.cfg.n_sigma,
-                self.cdtype, delta)[0 if squeeze else slice(None)]
+            if Tq_b.shape[0] != 1 and Tq_b.shape[0] != p.shape[0]:
+                raise ValueError("localized Tq batch does not match x")
+            if Tq_b.shape[0] != 1:
+                # _GridOT expects Tq (L,K); fall through to autograd path below.
+                backend = "grid"
+            else:
+                res2 = max(sigma ** 2 - self.sigma_grid ** 2, 0.0)
+                return _GridOT.apply(
+                    p, w, self.qk, self.keep_idx,
+                    torch.exp(-2 * math.pi ** 2 * res2 * self.qk ** 2), Tq_b[0],
+                    self.dt, self.P, self.n_empty, self.sigma_grid, self.cfg.n_sigma,
+                    self.cdtype, delta)[0 if squeeze else slice(None)]
         if backend == "direct":
             Mq = self._model_direct(p, w, ff)
         else:
@@ -261,7 +377,7 @@ class SlicedOT(nn.Module):
             Mq = self._model_grid(
                 p, w, torch.exp(-2 * math.pi ** 2 * res2 * self.qk ** 2))
 
-        dif = Mq - Tq.unsqueeze(0)
+        dif = Mq - Tq_b
         denom = 1j * TWOPI * self.qk * self.dt
         nz = self.qk != 0
         A = dif.new_zeros((dif.shape[0], self.n_dirs, self.P))
@@ -280,7 +396,8 @@ class SlicedOT(nn.Module):
     # -------------------------------------------------------- deformation oracle
     @torch.no_grad()
     def deformation(self, x: torch.Tensor, w: torch.Tensor,
-                    sigma: Optional[float] = None) -> torch.Tensor:
+                    sigma: Optional[float] = None,
+                    local_radius: Optional[float] = None) -> torch.Tensor:
         """Backprojected Monge displacement, preconditioned by M^{-1} -> d*I.
 
         This is a LENGTH, not a gradient.  The W1 gradient is a smoothed sign: bounded
@@ -294,7 +411,13 @@ class SlicedOT(nn.Module):
         if w.ndim == 1:
             w = w.expand(x.shape[0], -1)
         sigma = self.sigma_data if sigma is None else float(sigma)
-        Tq = self.stage(sigma)
+        R = self._resolve_local_radius(local_radius)
+        if R is not None:
+            Tq = self._localized_target_spectrum(x[:1], R, sigma)
+            if Tq.ndim == 3:
+                Tq = Tq[0]
+        else:
+            Tq = self.stage(sigma)
 
         A = self.Tq.new_zeros((self.n_dirs, self.P))
         A[:, self.keep_idx] = Tq
