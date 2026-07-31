@@ -591,10 +591,7 @@ class CrystalSlicedOT(SlicedOT):
         qk = q[keep]
 
         U = fibonacci_directions(config.n_dirs, dtype=dtype).to(m.device)
-        Tq = torch.empty((config.n_dirs, qk.numel()), dtype=cdt, device=m.device)
-        for l in range(config.n_dirs):
-            a = V @ U[l]
-            Tq[l] = torch.exp(-1j * TWOPI * qk[:, None] * a[None, :]).to(cdt) @ mv.to(cdt)
+        Tq = SlicedOT._structure_factor_from_voxels(V, mv, U, qk, cdt)
 
         self.register_buffer("q", q)
         self.register_buffer("qk", qk)
@@ -602,6 +599,8 @@ class CrystalSlicedOT(SlicedOT):
         self.register_buffer("U", U)
         self.register_buffer("Tq", Tq)
         self.register_buffer("centre", centre)
+        self.register_buffer("V_vox", V)
+        self.register_buffer("m_vox", mv)
         self.register_buffer("O", O)
         self.P, self.dt, self.Lt = P, dt, Lt
         self.n_empty = P // 2
