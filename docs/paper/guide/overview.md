@@ -57,7 +57,7 @@ particle.
 Two consequences matter later:
 
 1. **Gradient.** The dual potential has derivative
-   $`f'(t)=-\operatorname{sgn}\bigl(F_\mu(t)-F_\nu(t)\bigr)`$ — a *sign*.
+   $`f'(t)=-\mathrm{sgn}\bigl(F_\mu(t)-F_\nu(t)\bigr)`$ — a *sign*.
    Its magnitude does not shrink when the densities stop overlapping.
 2. **Step length.** The monotone map itself supplies a displacement that
    *does* vanish at the solution. Force and step length come from different
@@ -73,7 +73,7 @@ In the plane the same question is harder. A **Monge map** $`T`$ pushes
 $`\mu`$ forward onto $`\nu`$,
 
 $$
-T_{\#}\mu=\nu,\qquad
+T_{\sharp}\mu=\nu,\qquad
 \text{cost}=\int \|x-T(x)\|\,\mathrm{d}\mu(x),
 $$
 
@@ -205,7 +205,7 @@ $`1`$-Lipschitz potentials, and in one dimension the optimal potential is
 essentially unique up to a constant. Its derivative is a sign of the CDF gap:
 
 $$
-f'(t)=-\operatorname{sgn}\bigl(F_\mu(t)-F_\nu(t)\bigr).
+f'(t)=-\mathrm{sgn}\bigl(F_\mu(t)-F_\nu(t)\bigr).
 $$
 
 Wherever the cumulatives differ at all, $`|f'|=1`$. The potential itself is the
@@ -224,7 +224,7 @@ Two structural facts follow immediately:
 
 Back-projecting $`f'`$ along the slice directions $`u_\ell`$ is what produces
 the atomic force in sliced $`W_1`$. In the FFT pipeline of §3.2 the same object
-appears as $`\operatorname{sgn}(H)`$ (or $`\tanh(H/\delta)`$ when a log-cosh
+appears as $`\mathrm{sgn}(H)`$ (or $`\tanh(H/\delta)`$ when a log-cosh
 surrogate is used).
 
 ### 4.2 Local targets go blind; $`W_1`$ does not
@@ -309,7 +309,7 @@ $$
 
 $`\delta_j`$ is a **length** along $`u`$. It shrinks to zero when the projected
 model and target already agree at that quantile. The dual force
-$`\operatorname{sgn}(F_{P_u\mu}-F_{P_u\nu})`$ at the same place stays $`\pm 1`$.
+$`\mathrm{sgn}(F_{P_u\mu}-F_{P_u\nu})`$ at the same place stays $`\pm 1`$.
 
 ### 5.2 Back-projection and the $`M^{-1}`$ factor
 
@@ -464,7 +464,7 @@ $$
 =-\bigl(\psi\ast g_{\sigma_g}\bigr)(p_j),
 \qquad
 \psi=\mathcal{F}^{-1}\!\bigl[
-  \overline{\widehat{\operatorname{sgn}}H}\cdot f_{\mathrm{res}}
+  \overline{\widehat{\mathrm{sgn}}H}\cdot f_{\mathrm{res}}
 \bigr]
 \quad\text{(phase-origin / }e^{-iqp}\text{ branch)}.
 $$
@@ -509,7 +509,7 @@ $$
 
 So the recipe for a per-atom force vector is:
 
-1. On each slice, build the dual field from $`\operatorname{sgn} H_\ell`$
+1. On each slice, build the dual field from $`\mathrm{sgn} H_\ell`$
    (or $`\tanh(H_\ell/\delta)`$), apply the residual form factor, transform
    back on the $`e^{-2\pi i q p}`$ branch → $`\psi_\ell(t)`$.
 2. Gather $`\psi_\ell`$ at $`p_{\ell j}`$ with the atomic Gaussian $`g`$ →
@@ -534,14 +534,14 @@ back-projected along the slice directions; its magnitude stays $`O(1)`$ under
 rigid misplacement (the translation-anchor
 $`\lVert\nabla E\rVert/w\sim\frac{1}{L}\sum_\ell|u_\ell\cdot e|`$). Step length
 still comes from `deformation` (§5), which uses quantile matching rather than
-$`\operatorname{sgn} H`$.
+$`\mathrm{sgn} H`$.
 
 ### 6.5 Where this sits in the stack
 
 | Layer | Object | Backend role |
 |-------|--------|--------------|
 | Score | $`\int\|H\|`$ after spectral $`\int(M-T)`$ | same for direct and grid |
-| Force | $`\operatorname{sgn}H`$ → gather → $`\sum_\ell\phi_{\ell j}u_\ell`$ | per-atom $`\nabla_{r_j}E`$ |
+| Force | $`\mathrm{sgn}H`$ → gather → $`\sum_\ell\phi_{\ell j}u_\ell`$ | per-atom $`\nabla_{r_j}E`$ |
 | Length | sliced Monge + $`M^{-1}`$ | independent of how $`M(q)`$ was formed |
 | Cost | $`O(N)`$ vs $`O(N\log P)`$ | grid past a few dozen atoms |
 
@@ -560,7 +560,7 @@ computation, so the FFT machinery crystallography already trusts evaluates it.
 | 3a | One slice $`W_1(P_u\mu,P_u\nu)`$ | 1-D OT | yes |
 | 3b | $`\mathcal{SW}_1`$ | average of slices | yes |
 | 3c | Same, via FFTs | structure factors + $`\int\|H\|`$ | yes |
-| 4 | Dual $`f'\!=\!-\operatorname{sgn}(\Delta F)`$ | back-projected force | yes |
+| 4 | Dual $`f'\!=\!-\mathrm{sgn}(\Delta F)`$ | back-projected force | yes |
 | 5 | Sliced Monge + $`M^{-1}`$ | per-atom step length | yes |
 | 6 | Agarwal / Ten Eyck grid | scatter + FFT + gather($`g`$) | yes |
 
@@ -571,14 +571,22 @@ route the field already uses.
 
 ## 8. Algorithmic overview
 
-The preceding sections derived each piece. Assembled, the pipeline is:
+The preceding sections derived each piece. Assembled, the pipeline is the
+figure below (regenerated with the rest of the guide via `make_figures.py`):
 
 ![Algorithmic overview of slicedot](fig/00_algorithm_overview.png)
 
-Inputs feed a forward structure-factor score; the same $`H`$ is read two ways
-(force from the dual, length from Monge); the update protocol reaches with
-$`\nabla E`$, steps with $`v_j`$ (or an external optimiser), restrains
-chemistry, and hands off to conventional refinement in-basin.
+Read top to bottom:
+
+| Lane | What happens |
+|------|----------------|
+| **Inputs** | Map $`\rho_T`$, atoms $`(r_j,w_j)`$, directions $`u_\ell`$, backend |
+| **Forward** | Precompute $`T_\ell(q)`$ → project → $`M_\ell(q)`$ (direct or grid) → spectral $`H_\ell`$ → score $`E`$ |
+| **Steps** | Same $`H_\ell`$ → **FORCE** $`\nabla_{r_j}E`$ (dual) and **LENGTH** $`v_j`$ (Monge + $`M^{-1}`$) |
+| **Updates** | Reach with the sign force, move with Monge (or Adam/ADMM), restrain ($`P_{\mathrm{restr}}`$), hand off in-basin |
+
+Three roles, colour-coded in the figure: **force** reaches across empty space,
+**Monge** supplies a vanishing step length, and the **FFT** route evaluates both.
 
 ---
 
