@@ -88,6 +88,7 @@ def leucine_topology():
     return {
         "X_ref": _X0.copy(),
         "names": _ATOM_NAMES,
+        "elements": _Z.astype(np.int64).copy(),
         "bonds": list(_BONDS),
         "rotatable_bonds": list(_ROTATABLE),
         "chiral_centres": list(_CHIRAL),
@@ -98,6 +99,11 @@ def leucine_topology():
             "CB": CB, "CG": CG, "CD1": CD1, "CD2": CD2,
             "NME_N": NME_N, "NME_CH3": NME_CH3,
         },
+        # CD1↔CD2 is a graph automorphism
+        "automorphism_generators": [
+            np.arange(13, dtype=np.int64),
+            np.array([0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 9, 11, 12], dtype=np.int64),
+        ],
     }
 
 
@@ -110,8 +116,18 @@ rotatable_bonds = list(_ROTATABLE)
 chiral_centres = list(_CHIRAL)
 planar_groups = [list(g) for g in _PLANAR]
 
+def leucine_elements():
+    """Atomic numbers for the capped leucine fixture."""
+    return _Z.astype(np.int64).copy()
+
+
 __all__ = [
     "X0", "W", "Z", "names", "sigma_of",
     "bonds", "rotatable_bonds", "chiral_centres", "planar_groups",
-    "leucine_topology",
+    "leucine_topology", "leucine_elements",
 ]
+
+# Re-export oligopeptide builder for convenience.
+from slicedot.fixtures_peptide import lrp_pdb_topology, oligopeptide_topology  # noqa: E402
+
+__all__.extend(["oligopeptide_topology", "lrp_pdb_topology"])

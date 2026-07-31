@@ -1,0 +1,81 @@
+data_PHNL
+# Ortho-alkyl phenol naming dictionary.
+# Ring + C–O angles are harmonic; floppy chain angles are flat [108°, 180°].
+_chem_comp.id PHNL
+loop_
+_chem_comp_atom.comp_id
+_chem_comp_atom.atom_id
+_chem_comp_atom.type_symbol
+PHNL C1 C
+PHNL C2 C
+PHNL C3 C
+PHNL C4 C
+PHNL C5 C
+PHNL C6 C
+PHNL O O
+PHNL Ca C
+PHNL Cb C
+PHNL Cc C
+PHNL Cd C
+PHNL Ce C
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_dist
+_chem_comp_bond.value_dist_esd
+PHNL C1 C2 1.39000 0.35000
+PHNL C2 C3 1.39000 0.35000
+PHNL C3 C4 1.39000 0.35000
+PHNL C4 C5 1.39000 0.35000
+PHNL C5 C6 1.39000 0.35000
+PHNL C6 C1 1.39000 0.35000
+PHNL C1 O 1.36000 0.35000
+PHNL C2 Ca 1.54000 0.35000
+PHNL Ca Cb 1.54000 0.35000
+PHNL Cb Cc 1.54000 0.35000
+PHNL Cc Cd 1.54000 0.35000
+PHNL Cd Ce 1.54000 0.35000
+loop_
+_chem_comp_angle.comp_id
+_chem_comp_angle.atom_id_1
+_chem_comp_angle.atom_id_2
+_chem_comp_angle.atom_id_3
+_chem_comp_angle.value_angle
+_chem_comp_angle.value_angle_esd
+_chem_comp_angle.value_angle_min
+_chem_comp_angle.value_angle_max
+PHNL C6 C1 C2 120.000 5.000 . .
+PHNL C1 C2 C3 120.000 5.000 . .
+PHNL C2 C3 C4 120.000 5.000 . .
+PHNL C3 C4 C5 120.000 5.000 . .
+PHNL C4 C5 C6 120.000 5.000 . .
+PHNL C5 C6 C1 120.000 5.000 . .
+PHNL C2 C1 O 120.000 5.000 . .
+PHNL C6 C1 O 120.000 5.000 . .
+PHNL C1 C2 Ca 120.000 8.000 . .
+PHNL C3 C2 Ca 120.000 8.000 . .
+PHNL C2 Ca Cb 120.000 15.000 108.000 180.000
+PHNL Ca Cb Cc 120.000 15.000 108.000 180.000
+PHNL Cb Cc Cd 120.000 15.000 108.000 180.000
+PHNL Cc Cd Ce 120.000 15.000 108.000 180.000
+loop_
+_chem_comp_plane_atom.comp_id
+_chem_comp_plane_atom.plane_id
+_chem_comp_plane_atom.atom_id
+_chem_comp_plane_atom.dist_esd
+PHNL ring C1 0.30000
+PHNL ring C2 0.30000
+PHNL ring C3 0.30000
+PHNL ring C4 0.30000
+PHNL ring C5 0.30000
+PHNL ring C6 0.30000
+loop_
+_chem_comp_dist.comp_id
+_chem_comp_dist.atom_id_1
+_chem_comp_dist.atom_id_2
+_chem_comp_dist.value_dist
+_chem_comp_dist.value_dist_esd
+PHNL C1 C4 2.78000 0.55000
+PHNL C2 C5 2.78000 0.55000
+PHNL C3 C6 2.78000 0.55000

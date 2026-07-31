@@ -5,10 +5,17 @@ Idealized lengths: aromatic C–C ≈ 1.39 Å, C–O ≈ 1.36 Å, aliphatic C–
 
 Coordinates are (N, 2) in Å with columns (x, y), centred on the COM.
 Atom order: C1..C6, O, Ca..Ce (chain).
+
+Naming uses the CIF restraint dictionary ``phenol_restraints.cif`` (ring
+angles harmonic; floppy chain angles flat in [108°, 180°]).
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
+
+_PHENOL_CIF = Path(__file__).resolve().parent / "phenol_restraints.cif"
 
 # Atom order: C1 (ipso), C2 (ortho+chain), C3, C4, C5, C6, O, Ca, Cb, Cc, Cd, Ce
 NAMES = ("C1", "C2", "C3", "C4", "C5", "C6", "O", "Ca", "Cb", "Cc", "Cd", "Ce")
@@ -117,6 +124,42 @@ def phenol_geometry(X_ref_2d: np.ndarray | None = None):
         antibump=True,
         antibump_r0=2.8,
     )
+
+
+def phenol_restraint_set():
+    """Load the phenol naming dictionary (CIF)."""
+    from slicedot import load_restraint_cif
+
+    return load_restraint_cif(_PHENOL_CIF)
+
+
+def phenol_namer(X_ref_2d: np.ndarray | None = None):
+    """``Namer`` for the planar phenol using ``phenol_restraints.cif``."""
+    from slicedot import Namer
+
+    if X_ref_2d is None:
+        X_ref_2d, _ = build_phenol()
+    X3 = np.column_stack([np.asarray(X_ref_2d, dtype=np.float64),
+                          np.zeros(len(X_ref_2d))])
+    rs = phenol_restraint_set()
+    # CIF atom order must match NAMES / coordinate order.
+    if tuple(rs.atom_ids) != NAMES:
+        raise ValueError(
+            f"phenol CIF atom order {rs.atom_ids} != NAMES {NAMES}"
+        )
+    return Namer(
+        X3,
+        restraint_set=rs,
+        rotatable_bonds=ROTATABLE_BONDS,
+        chiral_centres=(),
+        planar_groups=PLANAR_GROUPS,
+    )
+
+
+def embed3(X2: np.ndarray) -> np.ndarray:
+    """(N, 2) → (N, 3) with z = 0."""
+    X2 = np.asarray(X2, dtype=np.float64)
+    return np.column_stack([X2, np.zeros(len(X2))])
 
 
 def project_2d(

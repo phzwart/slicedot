@@ -156,6 +156,33 @@ def test_antibump(geom, leu):
     assert sep >= 2.5, f"separation after project {sep:.2f} Å"
 
 
+def test_antibump_slack_anneals(geom, leu):
+    """Loose slack should dead-zone a mild clash; tight slack should resolve it."""
+    idx = leu["idx"]
+    X = leu["X_ref"].copy()
+    i, j = idx["ACE_CH3"], idx["CD2"]
+    pair = (i, j) if i < j else (j, i)
+    assert pair in geom.bump_pairs
+    k = geom.bump_pairs.index(pair)
+    mid = 0.5 * (X[i] + X[j])
+    # Separation 2.2 Å → 0.6 Å penetration vs r0=2.8
+    X[i] = mid + np.array([1.1, 0.0, 0.0])
+    X[j] = mid - np.array([1.1, 0.0, 0.0])
+    assert abs(np.linalg.norm(X[j] - X[i]) - 2.2) < 1e-9
+
+    prev = geom.slack
+    try:
+        geom.slack = 0.8  # dead zone covers the 0.6 Å penetration
+        bump_loose, _ = geom._bump_residuals(X)
+        assert float(bump_loose[k]) == 0.0
+
+        geom.slack = 0.0
+        bump_tight, _ = geom._bump_residuals(X)
+        assert float(bump_tight[k]) > 0.0
+    finally:
+        geom.slack = prev
+
+
 def test_ot_roundtrip(geom, leu):
     """One over-relaxed deformation step then P_restr."""
     from slicedot.fixtures import sigma_of

@@ -16,8 +16,10 @@ uv sync --extra paper
 
 ```bash
 uv run python docs/paper/examples/phenol_2d_reach/make_figure.py
+uv run python docs/paper/examples/phenol_2d_reach/make_ot_unrestrained.py
+uv run python docs/paper/examples/phenol_2d_reach/make_ot_name_refine.py
 uv run python docs/paper/examples/phenol_2d_reach/make_movie.py --resolution 3
 uv run python docs/paper/examples/phenol_2d_reach/make_movie.py --reuse
 ```
 
-Writes `phenol_2d_reach/out/phenol_2d_reach.pdf`, `.png`, and `phenol_2d_reach_movie_<res>.gif`.
+Writes `phenol_2d_reach/out/phenol_2d_reach.pdf`, `.png`, `phenol_ot_unrestrained*.png` (Adam OT only, NN-matched RMSD), `phenol_ot_name_refine_*.png` (free OT → Namer → ADMM cleanup), and `phenol_2d_reach_movie_<res>.gif`.

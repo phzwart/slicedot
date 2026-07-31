@@ -80,8 +80,8 @@ X_proj, weighted_rms, nfev = geom.project(X, tol=1e-4, max_iter=200)
 ```
 
 `Geometry.project` is a nonlinear least-squares idealisation onto distance / chiral /
-planar / antibump restraints — an *approximate* projection (not Dykstra). Distance
-and planar terms use a ReLU flat-bottom of half-width ``slack`` (Å); anneal
+planar / antibump restraints — an *approximate* projection (not Dykstra). Distance,
+planar, and antibump terms use a ReLU flat-bottom of width ``slack`` (Å); anneal
 ``slack`` from loose → tight during Stage A. Mark rotatable bonds explicitly so
 1–4 restraints do not freeze rotamers.
 

@@ -4,10 +4,11 @@ Builds distance / chiral / planar / antibump residuals from a reference structur
 and drives an input pose onto that restraint manifold with nonlinear least
 squares (SciPy trust-region reflective / Levenberg--Marquardt).
 
-Distance and planar terms use a ReLU flat-bottom: the residual is zero while
-``||obs| - target| ≤ slack``, and grows only outside that dead zone.  Callers
-can anneal ``slack`` from loose → tight over Stage A so early OT steps have
-room to move before chemistry is sharpened.
+Distance, planar, and antibump terms use a ReLU flat-bottom: the residual is
+zero while the violation is within ``slack``, and grows only outside that dead
+zone (two-sided for distances / planarity; one-sided for antibump contacts).
+Callers can anneal ``slack`` from loose → tight over Stage A so early OT steps
+have room to move before chemistry is sharpened.
 
 This is an *approximate* projection: it lands on (near) the restraint manifold
 but is not guaranteed to be the nearest point (that would need Dykstra).  It is
@@ -176,7 +177,7 @@ class Geometry:
         self.w = {**DEFAULT_WEIGHTS, **(weights or {})}
         self.antibump = bool(antibump)
         self.antibump_r0 = float(antibump_r0)
-        # Dead-zone half-width (Å) for distance / planar ReLU flat-bottoms.
+        # Dead-zone width (Å) for distance / planar / antibump ReLU flat-bottoms.
         self.slack = float(slack)
 
         self.D = topo_distance_matrix(self.bonds, self.n)
@@ -239,20 +240,35 @@ class Geometry:
         return np.asarray(out, dtype=np.float64)
 
     def _bump_residuals(self, X: np.ndarray) -> tuple[np.ndarray, int]:
+        """One-sided ReLU: 0 while L ≥ r0 − slack, else (r0 − slack − L)/σ."""
         if not self.antibump:
             return np.zeros(0, dtype=np.float64), 0
         sig = self.w["bump"]
         r0 = self.antibump_r0
+        slack = self.slack
         vals = []
         active = 0
         for i, j in self.bump_pairs:
             L = float(np.linalg.norm(X[j] - X[i]))
-            if L < r0:
-                vals.append((r0 - L) / sig)
+            # Annealable dead zone: allow up to ``slack`` Å of contact before
+            # the antibump residual turns on (one-sided; never attract).
+            pen = max(0.0, r0 - L - slack)
+            if pen > 0.0:
+                vals.append(pen / sig)
                 active += 1
             else:
                 vals.append(0.0)
         return np.asarray(vals, dtype=np.float64), active
+
+    def _bump_errors_A(self, X: np.ndarray) -> list[float]:
+        """True penetrations max(0, r0−L) in Å (ignores slack); diagnostics only."""
+        if not self.antibump:
+            return []
+        r0 = self.antibump_r0
+        return [
+            max(0.0, r0 - float(np.linalg.norm(X[j] - X[i])))
+            for i, j in self.bump_pairs
+        ]
 
     def _pack(self, X: np.ndarray) -> np.ndarray:
         d, _ = self._distance_residuals(X)
@@ -312,17 +328,18 @@ class Geometry:
                         ) / sigp
                         row[3 * atom + k] = (hp - base[h_i]) / eps
                 rows.append(row)
-        # bump
+        # bump — zero Jacobian inside the (r0 − slack) dead zone
         if self.antibump:
             sigb = self.w["bump"]
             r0 = self.antibump_r0
+            r_on = r0 - slack
             for i, j in self.bump_pairs:
                 v = X[j] - X[i]
                 L = float(np.linalg.norm(v))
                 row = np.zeros(n3)
-                if L < r0 and L > 1e-12:
+                if L < r_on and L > 1e-12:
                     u = v / (L * sigb)
-                    # r = (r0 - L)/sig → dr/dxi = +u, dr/dxj = -u
+                    # r = (r0 - slack - L)/sig → dr/dxi = +u, dr/dxj = -u
                     row[3 * i:3 * i + 3] = u
                     row[3 * j:3 * j + 3] = -u
                 rows.append(row)
@@ -338,12 +355,13 @@ class Geometry:
     def residual(self, X: np.ndarray) -> dict:
         """Per-class residual diagnostics (unweighted Å / Å³ where noted).
 
-        Distance / planar diagnostics report the true deviation (Å), not the
-        slack-clipped ReLU residual used by the optimiser.
+        Distance / planar / bump diagnostics report the true deviation (Å), not
+        the slack-clipped ReLU residual used by the optimiser.
         """
         X = np.asarray(X, dtype=np.float64)
         by = self._distance_errors_A(X)
-        bump, n_active = self._bump_residuals(X)
+        bump_raw = self._bump_errors_A(X)
+        _, n_active = self._bump_residuals(X)
         chiral = self._chiral_residuals(X)
         # raw planar heights (Å), not slack-clipped
         planar_raw = []
@@ -373,12 +391,7 @@ class Geometry:
                 ],
             },
             "planar": _stats(planar_raw),
-            "bump": {
-                "max": float(np.max(bump) * self.w["bump"]) if bump.size else 0.0,
-                "rms": float(np.sqrt((bump ** 2).mean()) * self.w["bump"]) if bump.size else 0.0,
-                "n": int(bump.size),
-                "active": int(n_active),
-            },
+            "bump": {**_stats(bump_raw), "active": int(n_active)},
             "weighted_rms": float(np.sqrt((packed ** 2).mean())) if packed.size else 0.0,
             "slack": float(self.slack),
             "distance_max_A": float(max(
@@ -447,8 +460,9 @@ class Geometry:
         Parameters
         ----------
         slack : float, optional
-            Temporary ReLU flat-bottom half-width (Å).  ``None`` keeps
-            ``self.slack``.  Restored after the call.
+            Temporary ReLU flat-bottom width (Å) for distance / planar /
+            antibump terms.  ``None`` keeps ``self.slack``.  Restored after
+            the call.
 
         Returns
         -------
@@ -498,6 +512,7 @@ class Geometry:
                     info["distance_max_A"] <= dist_ok
                     and info["planar"]["max"] <= 5 * tol + self.slack
                     and info["chiral"]["max"] <= 5 * tol
+                    and info["bump"]["max"] <= tol + self.slack
                 ):
                     break
                 res = least_squares(
