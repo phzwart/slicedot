@@ -59,6 +59,32 @@ For a general crystallographic cell, use `CrystalSlicedOT(map, cell, sigma_data,
 | `auto` | — | chooses `grid` when $N \ge 64$ |
 | `grid_custom` | same as `grid` | hand-derived backward (lower activation memory) |
 
+## Geometry operator (`P_restr`)
+
+OT moves atoms independently and breaks chemistry. Alternating projection repairs that:
+
+```python
+from slicedot import Geometry
+from slicedot.fixtures import leucine_topology
+
+topo = leucine_topology()
+geom = Geometry(
+    topo["X_ref"], topo["bonds"],
+    rotatable_bonds=topo["rotatable_bonds"],   # χ bonds: no 1–4 across these
+    chiral_centres=topo["chiral_centres"],     # signed Cα volumes
+    planar_groups=topo["planar_groups"],       # peptide planes
+)
+
+# Stage A: idealise. Loop: over-relaxed P_data, then P_restr. End on P_restr.
+X_proj, weighted_rms, nfev = geom.project(X, tol=1e-4, max_iter=200)
+```
+
+`Geometry.project` is a nonlinear least-squares idealisation onto distance / chiral /
+planar / antibump restraints — an *approximate* projection (not Dykstra). Distance
+and planar terms use a ReLU flat-bottom of half-width ``slack`` (Å); anneal
+``slack`` from loose → tight during Stage A. Mark rotatable bonds explicitly so
+1–4 restraints do not freeze rotamers.
+
 ## Validation
 
 The paper's end-to-end protocol lives in `tests/`:
@@ -81,8 +107,10 @@ uv run python examples/score_leucine.py
 ```
 src/slicedot/
   core.py       SlicedOT, CrystalSlicedOT, helpers
+  geometry.py   P_restr / Geometry idealisation
+  perturb.py    torsion / backrub start generators
   fixtures.py   capped leucine fragment for tests/examples
-tests/          paper validation battery
+tests/          OT + geometry acceptance battery
 docs/paper/     manuscript (TeX + PDF)
 examples/       runnable demos
 ```

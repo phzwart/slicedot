@@ -1,64 +1,117 @@
 """Small synthetic molecules used by tests and examples.
 
-The capped leucine fragment is an idealized ACE-LEU-NME heavy-atom geometry
-(13 atoms). Coordinates are approximate stereochemistry, sufficient for the
-mathematical validation protocol (floor, analytic translation anchor, FD
-gradients, deformation oracle). They are not a crystallographic deposition.
+Capped leucine (ACE-LEU-NME, 13 heavy atoms) with tetrahedral L-Cα,
+planar peptides, and an extended side chain so topo>3 pairs clear ~3 Å.
 """
 from __future__ import annotations
 
 import numpy as np
 
-# Atom order: ACE C, ACE O, ACE CH3, N, CA, C, O, CB, CG, CD1, CD2, NME N, NME CH3
 _ATOM_NAMES = (
-    "ACE_C",
-    "ACE_O",
-    "ACE_CH3",
-    "N",
-    "CA",
-    "C",
-    "O",
-    "CB",
-    "CG",
-    "CD1",
-    "CD2",
-    "NME_N",
-    "NME_CH3",
+    "ACE_C", "ACE_O", "ACE_CH3", "N", "CA", "C", "O",
+    "CB", "CG", "CD1", "CD2", "NME_N", "NME_CH3",
 )
 
-# Electron counts for heavy atoms (C=6, N=7, O=8)
+ACE_C, ACE_O, ACE_CH3, N, CA, C, O, CB, CG, CD1, CD2, NME_N, NME_CH3 = range(13)
+
 _Z = np.array([6, 8, 6, 7, 6, 6, 8, 6, 6, 6, 6, 7, 6], dtype=np.float64)
 
-_X0 = np.array(
-    [
-        [-2.3231, -1.0000, -0.1769],
-        [-2.8231, 0.1000, -0.1769],
-        [-3.2231, -2.2000, -0.1769],
-        [-1.0231, -1.4000, -0.1769],
-        [-0.1231, -0.5000, -0.1769],
-        [1.2769, -1.0000, -0.1769],
-        [1.6769, -2.1000, -0.1769],
-        [-0.5231, 0.9000, 0.4231],
-        [0.2769, 2.1000, 0.0231],
-        [-0.4231, 3.4000, 0.5231],
-        [1.6769, 2.0000, 0.6231],
-        [2.0769, 0.0000, -0.1769],
-        [3.4769, -0.3000, -0.1769],
-    ],
-    dtype=np.float64,
-)
+_BONDS = [
+    (ACE_CH3, ACE_C), (ACE_C, ACE_O), (ACE_C, N),
+    (N, CA), (CA, C), (C, O), (C, NME_N), (NME_N, NME_CH3),
+    (CA, CB), (CB, CG), (CG, CD1), (CG, CD2),
+]
+_ROTATABLE = [(CA, CB), (CB, CG)]
+_CHIRAL = [(CA, N, C, CB)]
+_PLANAR = [
+    [ACE_CH3, ACE_C, ACE_O, N],
+    [C, O, NME_N, NME_CH3],
+]
+
+
+def _u(v):
+    n = np.linalg.norm(v)
+    return v / n if n > 1e-15 else v
+
+
+def _build_leucine_coords() -> np.ndarray:
+    """Hand-built extended conformer (Å)."""
+    X = np.zeros((13, 3), dtype=np.float64)
+
+    # Backbone in xy, Cα at origin; CB above plane for L chirality
+    X[N] = np.array([-1.45, 0.20, 0.00])
+    X[CA] = np.array([0.00, 0.00, 0.00])
+    X[C] = np.array([1.52, 0.30, 0.00])
+    X[CB] = np.array([-0.40, -0.80, 1.35])  # out of plane → V ≠ 0
+
+    # ACE peptide plane (z=0): CH3–C(=O)–N
+    X[ACE_C] = np.array([-2.50, 0.90, 0.00])
+    X[ACE_O] = np.array([-2.45, 2.12, 0.00])
+    X[ACE_CH3] = np.array([-3.85, 0.25, 0.00])
+
+    # LEU–NME peptide plane (z=0)
+    X[O] = np.array([2.20, -0.75, 0.00])
+    X[NME_N] = np.array([2.30, 1.45, 0.00])
+    X[NME_CH3] = np.array([3.70, 1.80, 0.00])
+
+    # Extended side chain along +y,+z away from ACE/NME
+    X[CG] = np.array([-1.10, -2.00, 1.80])
+    X[CD1] = np.array([-2.50, -2.20, 2.40])
+    X[CD2] = np.array([-0.40, -3.30, 2.20])
+
+    X -= X.mean(0)
+    return X
+
+
+def _idealize(X: np.ndarray) -> np.ndarray:
+    """Snap approximate coords onto distance/chiral/planar manifold (no antibump)."""
+    from slicedot.geometry import Geometry
+
+    g = Geometry(
+        X, _BONDS, _ROTATABLE, _CHIRAL, _PLANAR,
+        antibump=False,
+        weights={"bond": 0.02, "angle": 0.04, "torsion14": 0.05,
+                 "chiral": 0.05, "planar": 0.01, "bump": 0.3},
+    )
+    Xp, _, _ = g.project(X, tol=1e-8, max_iter=800)
+    return Xp
+
+
+_X0 = _idealize(_build_leucine_coords())
 
 
 def sigma_of(resolution: float) -> float:
-    """Gaussian sigma whose FWHM equals ``resolution`` (paper convention)."""
     return float(resolution) / 2.3548
 
 
-# Public aliases matching the historical ``leu3d`` prototype module.
+def leucine_topology():
+    return {
+        "X_ref": _X0.copy(),
+        "names": _ATOM_NAMES,
+        "bonds": list(_BONDS),
+        "rotatable_bonds": list(_ROTATABLE),
+        "chiral_centres": list(_CHIRAL),
+        "planar_groups": [list(g) for g in _PLANAR],
+        "idx": {
+            "ACE_C": ACE_C, "ACE_O": ACE_O, "ACE_CH3": ACE_CH3,
+            "N": N, "CA": CA, "C": C, "O": O,
+            "CB": CB, "CG": CG, "CD1": CD1, "CD2": CD2,
+            "NME_N": NME_N, "NME_CH3": NME_CH3,
+        },
+    }
+
+
 X0 = _X0.copy()
 W = (_Z / _Z.sum()).copy()
 names = _ATOM_NAMES
 Z = _Z.copy()
+bonds = list(_BONDS)
+rotatable_bonds = list(_ROTATABLE)
+chiral_centres = list(_CHIRAL)
+planar_groups = [list(g) for g in _PLANAR]
 
-
-__all__ = ["X0", "W", "Z", "names", "sigma_of"]
+__all__ = [
+    "X0", "W", "Z", "names", "sigma_of",
+    "bonds", "rotatable_bonds", "chiral_centres", "planar_groups",
+    "leucine_topology",
+]

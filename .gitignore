@@ -36,6 +36,34 @@ htmlcov/
 
 # Scratch archives
 *.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+
+# Large / regenerable data artifacts
+*.npz
+*.npy
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.pt
+*.pth
+*.ckpt
+*.mmap
+*.parquet
+*.feather
+*.gif
+*.mp4
+*.avi
+*.webm
+*.dcd
+*.xtc
+*.trr
+*.nc
+*.xyz
+*.pdb
 
 # LaTeX build products (keep paper.pdf for convenience)
 docs/**/*.aux
@@ -45,3 +73,8 @@ docs/**/*.toc
 docs/**/*.fls
 docs/**/*.fdb_latexmk
 docs/**/*.synctex.gz
+
+# Regenerable paper-example outputs (keep out/.gitkeep via nested ignore)
+docs/paper/examples/**/out/*
+!docs/paper/examples/**/out/.gitignore
+!docs/paper/examples/**/out/.gitkeep
