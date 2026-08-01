@@ -11,6 +11,7 @@ Real-space refinement scores go blind once model and map stop overlapping. Slice
 > **Role.** Optimal transport here is a *search* device. Use it to deliver a model into the correct basin, then hand off to a conventional forward-model refinement with proper scaling, bulk solvent, and stereochemistry.
 
 Paper draft: [`docs/paper/`](docs/paper/) ([PDF](docs/paper/paper.pdf), [TeX](docs/paper/paper.tex)).
+Visual guide (1-D OT → FFT → phenol 2-D → peptide 3-D): [`docs/paper/guide/overview.md`](docs/paper/guide/overview.md).
 
 ## Install
 

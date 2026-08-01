@@ -219,20 +219,32 @@ def _style_axes(ax):
 
 
 def _pca_basis(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Return (center, R) mapping largest extent → x (image width).
+    """Frame with the *short* PCA axis along +y (view direction at azim=-90).
 
-    Rows of R are lab axes expressed in PC space: x = longest, z = 2nd
-    (screen-up at azim=0), y = shortest (depth).
+    Matplotlib ``view_init(elev=0, azim=-90)`` looks along ±y (x horizontal,
+    z vertical). So: longest → +x (width), shortest → +y (depth / view),
+    middle → +z (height).
     """
     pts = np.asarray(points, dtype=np.float64)
     c = pts.mean(0)
     _, _, vt = np.linalg.svd(pts - c, full_matrices=False)
     proj = (pts - c) @ vt.T
     extents = proj.max(axis=0) - proj.min(axis=0)
-    order = np.argsort(-extents)  # largest → smallest
-    R = np.stack([vt[order[0]], vt[order[2]], vt[order[1]]], axis=0)
+    i_short = int(np.argmin(extents))
+    rest = [i for i in range(3) if i != i_short]
+    # Among the in-plane axes, put the longer one on x (width).
+    if extents[rest[0]] < extents[rest[1]]:
+        rest = [rest[1], rest[0]]
+    i_long, i_mid = rest[0], rest[1]
+    # Rows of R: new +x, +y (view/depth), +z
+    R = np.stack([vt[i_long], vt[i_short], vt[i_mid]], axis=0)
     if np.linalg.det(R) < 0:
-        R[1] *= -1.0
+        R[2] *= -1.0
+    # Prefer density "up" with positive mean z after transform.
+    z_sign = float(((pts - c) @ R[2]).mean())
+    if z_sign < 0:
+        R[2] *= -1.0
+        R[1] *= -1.0  # keep right-handed
     return c, R
 
 
@@ -273,8 +285,12 @@ def _render_panel_rgb(
     dpi: int = 220,
 ) -> np.ndarray:
     """Render one 3-D panel and return a tightly cropped RGB array."""
-    # Wide short canvas: elongated density can occupy the full width.
-    fig = plt.figure(figsize=(9.0, 3.4), facecolor=C_BG)
+    # Canvas aspect ≈ in-plane density aspect (x/z) so width is used fully.
+    ext = cloud.max(0) - cloud.min(0)
+    aspect = float(max(ext[0], 1e-3) / max(ext[2], 1e-3))
+    fig_w = 9.0
+    fig_h = max(2.2, min(5.0, fig_w / aspect))
+    fig = plt.figure(figsize=(fig_w, fig_h), facecolor=C_BG)
     ax = fig.add_subplot(1, 1, 1, projection="3d", facecolor=C_BG)
     fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
 
@@ -300,6 +316,7 @@ def _render_panel_rgb(
             edgecolors=C_FREE_EDGE, linewidths=0.35,
         )
 
+    # elev≈0 keeps the short PCA axis (±y) as the viewing direction.
     ax.view_init(elev=elev, azim=azim)
     _frame_density(ax, cloud, pad=0.10)
     _style_axes(ax)
@@ -434,8 +451,8 @@ def draw_panels(
     path: dict,
     *,
     out_stem: str,
-    elev: float = 18.0,
-    azim: float = 0.0,
+    elev: float = 8.0,
+    azim: float = -90.0,
     iso_frac: float = 0.42,
     iso_alpha: float = 0.14,
 ) -> Path:
@@ -584,14 +601,14 @@ def main():
     ap.add_argument(
         "--elev",
         type=float,
-        default=18.0,
-        help="elevation after PCA align (long axis = x / width)",
+        default=8.0,
+        help="elevation; keep small so short PCA axis (~y) stays the view dir",
     )
     ap.add_argument(
         "--azim",
         type=float,
-        default=0.0,
-        help="azimuth after PCA align (0 looks along −y)",
+        default=-90.0,
+        help="azimuth after PCA align (-90 looks along ±y = short axis)",
     )
     ap.add_argument(
         "--iso-frac",

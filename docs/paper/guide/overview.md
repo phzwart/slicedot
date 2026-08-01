@@ -668,4 +668,14 @@ scrambled labels; `Namer` + a short restrained cleanup recovers chemistry.
 
 ![Zigzag Namer rescue at 3 Å](fig/31_phenol_zigzag3A_namer_rescue.png)
 
-Movies and the leucine 3-D sibling live under `docs/paper/examples/`.
+### 9.6 Same protocol in 3-D: peptide AFSSFN @ $`3`$ Å
+
+The phenol cartoons are planar. The same free-OT → name → restrain hand-off
+runs in three dimensions on a real oligopeptide fragment (sequence AFSSFN)
+against its rendered map at $`3`$ Å. Top to bottom: unlabelled free-atom
+landing, `Namer.assign`, then ADMM OT+L1+$`P_{\mathrm{restr}}`$ cleanup
+(`docs/paper/examples/leucine_3d_reach/make_pipeline_panels.py`):
+
+![AFSSFN 3-D pipeline panels at 3 Å](fig/32_peptide_AFSSFN_pipeline_panels_3A.png)
+
+Phenol movies and further 3-D runners live under `docs/paper/examples/`.

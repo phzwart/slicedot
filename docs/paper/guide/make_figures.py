@@ -10,8 +10,10 @@ Phenol application figures read committed pose caches:
 
 * 24–27  ``fig/cache/phenol_apps.npz``              (extended @ 1.5 Å)
 * 28–31  ``fig/cache/phenol_apps_zigzag_3A.npz``    (zigzag @ 3 Å)
+* 32     ``fig/32_peptide_AFSSFN_pipeline_panels_3A.png``
+         (3-D AFSSFN @ 3 Å; from ``leucine_3d_reach/make_pipeline_panels.py``)
 
-Build or refresh with:
+Build or refresh the phenol caches with:
 
     uv run python docs/paper/guide/build_phenol_apps_cache.py
 """
