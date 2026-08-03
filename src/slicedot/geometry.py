@@ -7,8 +7,11 @@ squares (SciPy trust-region reflective / Levenberg--Marquardt).
 Distance, planar, and antibump terms use a ReLU flat-bottom: the residual is
 zero while the violation is within ``slack``, and grows only outside that dead
 zone (two-sided for distances / planarity; one-sided for antibump contacts).
-Callers can anneal ``slack`` from loose → tight over Stage A so early OT steps
-have room to move before chemistry is sharpened.
+Optional ``slack_kinds`` overrides that width per restraint class
+(``bond`` / ``angle`` / ``torsion14`` / ``planar`` / ``bump`` / ``chiral``);
+angles are still 1–3 distances, so a ~10° dead zone is ~0.15 Å for typical
+organic bond lengths.  Callers can anneal slack from loose → tight over Stage A
+so early OT steps have room to move before chemistry is sharpened.
 
 This is an *approximate* projection: it lands on (near) the restraint manifold
 but is not guaranteed to be the nearest point (that would need Dykstra).  It is
@@ -163,6 +166,7 @@ class Geometry:
         antibump: bool = True,
         antibump_r0: float = 2.8,
         slack: float = 0.0,
+        slack_kinds: Optional[dict] = None,
     ):
         self.X_ref = np.asarray(X_ref, dtype=np.float64).copy()
         if self.X_ref.ndim != 2 or self.X_ref.shape[1] != 3:
@@ -177,8 +181,12 @@ class Geometry:
         self.w = {**DEFAULT_WEIGHTS, **(weights or {})}
         self.antibump = bool(antibump)
         self.antibump_r0 = float(antibump_r0)
-        # Dead-zone width (Å) for distance / planar / antibump ReLU flat-bottoms.
+        # Dead-zone width (Å / Å³ for chiral) for ReLU flat-bottoms.
         self.slack = float(slack)
+        self.slack_kinds = (
+            {str(k): float(v) for k, v in slack_kinds.items()}
+            if slack_kinds is not None else None
+        )
 
         self.D = topo_distance_matrix(self.bonds, self.n)
         self.pairs = build_distance_pairs(
@@ -200,16 +208,21 @@ class Geometry:
             if self.D[i, j] > 3 and self.D[i, j] < INF
         ]
 
+    def _slack_of(self, kind: str) -> float:
+        """Flat-bottom width for a restraint class (Å; Å³ for ``chiral``)."""
+        if self.slack_kinds is not None and kind in self.slack_kinds:
+            return float(self.slack_kinds[kind])
+        return float(self.slack)
+
     # ---------------------------------------------------------------- residuals
     def _distance_residuals(self, X: np.ndarray) -> tuple[np.ndarray, list[str]]:
         """Weighted ReLU flat-bottom residuals: 0 while |L−d0| ≤ slack."""
-        slack = self.slack
         vals, kinds = [], []
         for i, j, d0, kind in self.pairs:
             L = float(np.linalg.norm(X[j] - X[i]))
             sigma = self.w["bond" if kind == "bond" else
                            "angle" if kind == "angle" else "torsion14"]
-            vals.append(_relu_flat(L - d0, slack) / sigma)
+            vals.append(_relu_flat(L - d0, self._slack_of(kind)) / sigma)
             kinds.append(kind)
         return np.asarray(vals, dtype=np.float64), kinds
 
@@ -223,16 +236,17 @@ class Geometry:
 
     def _chiral_residuals(self, X: np.ndarray) -> np.ndarray:
         sig = self.w["chiral"]
+        slack = self._slack_of("chiral")
         return np.asarray(
-            [(chiral_volume(X, c, a, b, d) - V0) / sig
+            [_relu_flat(chiral_volume(X, c, a, b, d) - V0, slack) / sig
              for (c, a, b, d), V0 in zip(self.chiral_centres, self.V_ref)],
             dtype=np.float64,
         )
 
     def _planar_residuals(self, X: np.ndarray) -> np.ndarray:
-        """Signed out-of-plane heights with the same ReLU slack (Å)."""
+        """Signed out-of-plane heights with ReLU slack (Å)."""
         sig = self.w["planar"]
-        slack = self.slack
+        slack = self._slack_of("planar")
         out = []
         for idxs in self.planar_groups:
             for h in self._planar_group_heights(X, idxs):
@@ -245,7 +259,7 @@ class Geometry:
             return np.zeros(0, dtype=np.float64), 0
         sig = self.w["bump"]
         r0 = self.antibump_r0
-        slack = self.slack
+        slack = self._slack_of("bump")
         vals = []
         active = 0
         for i, j in self.bump_pairs:
@@ -280,7 +294,6 @@ class Geometry:
     def _jac(self, X: np.ndarray) -> np.ndarray:
         """Analytic Jacobian for distances / chiral / bump; FD for planarity."""
         n3 = 3 * self.n
-        slack = self.slack
         rows = []
         # distances — zero Jacobian inside the flat-bottom dead zone
         for i, j, d0, kind in self.pairs:
@@ -289,30 +302,33 @@ class Geometry:
             v = X[j] - X[i]
             L = float(np.linalg.norm(v))
             row = np.zeros(n3)
-            if L > 1e-12 and abs(L - d0) > slack:
+            if L > 1e-12 and abs(L - d0) > self._slack_of(kind):
                 u = v / (L * sigma)
                 row[3 * i:3 * i + 3] = -u
                 row[3 * j:3 * j + 3] = u
             rows.append(row)
-        # chiral
+        # chiral — zero Jacobian inside the volume dead zone
         sigc = self.w["chiral"]
-        for (c, a, b, d), _V0 in zip(self.chiral_centres, self.V_ref):
-            ga = np.cross(X[b] - X[c], X[d] - X[c]) / sigc
-            gb = np.cross(X[d] - X[c], X[a] - X[c]) / sigc
-            gd = np.cross(X[a] - X[c], X[b] - X[c]) / sigc
-            gc = -(ga + gb + gd)
+        slack_c = self._slack_of("chiral")
+        for (c, a, b, d), V0 in zip(self.chiral_centres, self.V_ref):
             row = np.zeros(n3)
-            row[3 * a:3 * a + 3] = ga
-            row[3 * b:3 * b + 3] = gb
-            row[3 * d:3 * d + 3] = gd
-            row[3 * c:3 * c + 3] = gc
+            if abs(chiral_volume(X, c, a, b, d) - V0) > slack_c:
+                ga = np.cross(X[b] - X[c], X[d] - X[c]) / sigc
+                gb = np.cross(X[d] - X[c], X[a] - X[c]) / sigc
+                gd = np.cross(X[a] - X[c], X[b] - X[c]) / sigc
+                gc = -(ga + gb + gd)
+                row[3 * a:3 * a + 3] = ga
+                row[3 * b:3 * b + 3] = gb
+                row[3 * d:3 * d + 3] = gd
+                row[3 * c:3 * c + 3] = gc
             rows.append(row)
         # planar — forward FD on the small group (respects slack)
         eps = 1e-6
         sigp = self.w["planar"]
+        slack_p = self._slack_of("planar")
         for idxs in self.planar_groups:
             base = np.asarray(
-                [_relu_flat(float(h), slack) / sigp
+                [_relu_flat(float(h), slack_p) / sigp
                  for h in self._planar_group_heights(X, idxs)],
                 dtype=np.float64,
             )
@@ -324,7 +340,7 @@ class Geometry:
                         Xp[atom, k] += eps
                         hp = _relu_flat(
                             float(self._planar_group_heights(Xp, idxs)[h_i]),
-                            slack,
+                            slack_p,
                         ) / sigp
                         row[3 * atom + k] = (hp - base[h_i]) / eps
                 rows.append(row)
@@ -332,7 +348,7 @@ class Geometry:
         if self.antibump:
             sigb = self.w["bump"]
             r0 = self.antibump_r0
-            r_on = r0 - slack
+            r_on = r0 - self._slack_of("bump")
             for i, j in self.bump_pairs:
                 v = X[j] - X[i]
                 L = float(np.linalg.norm(v))
@@ -394,6 +410,9 @@ class Geometry:
             "bump": {**_stats(bump_raw), "active": int(n_active)},
             "weighted_rms": float(np.sqrt((packed ** 2).mean())) if packed.size else 0.0,
             "slack": float(self.slack),
+            "slack_kinds": (
+                dict(self.slack_kinds) if self.slack_kinds is not None else None
+            ),
             "distance_max_A": float(max(
                 _stats(by["bond"])["max"],
                 _stats(by["angle"])["max"],
@@ -417,14 +436,14 @@ class Geometry:
     def _gauss_seidel(self, X: np.ndarray, sweeps: int = 40) -> np.ndarray:
         """SHAKE-style warm start on distance restraints only."""
         X = X.copy()
-        slack = self.slack
         for _ in range(sweeps):
-            for i, j, d0, _kind in self.pairs:
+            for i, j, d0, kind in self.pairs:
                 v = X[j] - X[i]
                 L = float(np.linalg.norm(v))
                 if L < 1e-12:
                     continue
                 # Pull only to the edge of the flat-bottom dead zone.
+                slack = self._slack_of(kind)
                 if abs(L - d0) <= slack:
                     continue
                 target = d0 + math.copysign(slack, L - d0)
@@ -454,15 +473,18 @@ class Geometry:
         tol: float = 1e-4,
         max_iter: int = 200,
         slack: Optional[float] = None,
+        slack_kinds: Optional[dict] = None,
     ) -> tuple[np.ndarray, float, int]:
         """Idealise ``X`` onto the restraint manifold.
 
         Parameters
         ----------
         slack : float, optional
-            Temporary ReLU flat-bottom width (Å) for distance / planar /
-            antibump terms.  ``None`` keeps ``self.slack``.  Restored after
-            the call.
+            Temporary scalar ReLU flat-bottom width (Å).  ``None`` keeps
+            ``self.slack``.  Restored after the call.
+        slack_kinds : dict, optional
+            Temporary per-class flat-bottom widths.  ``None`` keeps
+            ``self.slack_kinds``.  Restored after the call.
 
         Returns
         -------
@@ -477,8 +499,11 @@ class Geometry:
             raise ValueError(f"X shape {X0.shape} != ref {self.X_ref.shape}")
 
         prev_slack = self.slack
+        prev_kinds = None if self.slack_kinds is None else dict(self.slack_kinds)
         if slack is not None:
             self.slack = float(slack)
+        if slack_kinds is not None:
+            self.slack_kinds = {str(k): float(v) for k, v in slack_kinds.items()}
         try:
             packed0 = self._pack(X0)
             rms0 = float(np.sqrt((packed0 ** 2).mean())) if packed0.size else 0.0
@@ -505,14 +530,15 @@ class Geometry:
             nfev = warm_cost
             rms = float(np.sqrt((m0 ** 2).mean())) if m0.size else 0.0
             # Satisfied once true errors sit inside the flat-bottom (+ tol).
-            dist_ok = tol + self.slack
             for _ in range(3):
                 info = self.residual(X_proj)
                 if (
-                    info["distance_max_A"] <= dist_ok
-                    and info["planar"]["max"] <= 5 * tol + self.slack
-                    and info["chiral"]["max"] <= 5 * tol
-                    and info["bump"]["max"] <= tol + self.slack
+                    info["bond"]["max"] <= tol + self._slack_of("bond")
+                    and info["angle"]["max"] <= tol + self._slack_of("angle")
+                    and info["torsion14"]["max"] <= tol + self._slack_of("torsion14")
+                    and info["planar"]["max"] <= 5 * tol + self._slack_of("planar")
+                    and info["chiral"]["max"] <= 5 * tol + self._slack_of("chiral")
+                    and info["bump"]["max"] <= tol + self._slack_of("bump")
                 ):
                     break
                 res = least_squares(
@@ -538,3 +564,4 @@ class Geometry:
             return X_proj, rms, nfev
         finally:
             self.slack = prev_slack
+            self.slack_kinds = prev_kinds

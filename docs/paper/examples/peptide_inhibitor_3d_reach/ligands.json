@@ -1,0 +1,72 @@
+[
+  {
+    "slug": "ritonavir",
+    "label": "Ritonavir",
+    "ccd": "RIT",
+    "mw": 720.94,
+    "note": "HIV protease inhibitor; common PK booster."
+  },
+  {
+    "slug": "darunavir",
+    "label": "Darunavir",
+    "ccd": "017",
+    "mw": 547.66,
+    "note": "Current workhorse HIV protease inhibitor."
+  },
+  {
+    "slug": "atazanavir",
+    "label": "Atazanavir",
+    "ccd": "DR7",
+    "mw": 704.86,
+    "note": "HIV protease inhibitor."
+  },
+  {
+    "slug": "lopinavir",
+    "label": "Lopinavir",
+    "ccd": "AB1",
+    "mw": 628.81,
+    "note": "HIV protease inhibitor (Kaletra with ritonavir)."
+  },
+  {
+    "slug": "nirmatrelvir",
+    "label": "Nirmatrelvir",
+    "ccd": "4WI",
+    "mw": 499.54,
+    "note": "SARS-CoV-2 main protease inhibitor (Paxlovid)."
+  },
+  {
+    "slug": "saquinavir",
+    "label": "Saquinavir",
+    "ccd": "ROC",
+    "mw": 670.84,
+    "note": "First approved HIV protease inhibitor; peptide-like."
+  },
+  {
+    "slug": "indinavir",
+    "label": "Indinavir",
+    "ccd": "MK1",
+    "mw": 613.79,
+    "note": "HIV protease inhibitor."
+  },
+  {
+    "slug": "nelfinavir",
+    "label": "Nelfinavir",
+    "ccd": "1UN",
+    "mw": 567.78,
+    "note": "HIV protease inhibitor."
+  },
+  {
+    "slug": "amprenavir",
+    "label": "Amprenavir",
+    "ccd": "478",
+    "mw": 505.63,
+    "note": "HIV protease inhibitor (sulfonamide peptidomimetic)."
+  },
+  {
+    "slug": "telaprevir",
+    "label": "Telaprevir",
+    "ccd": "A1DIB",
+    "mw": 679.85,
+    "note": "HCV NS3/4A ketoamide protease inhibitor (CCD A1DIB)."
+  }
+]

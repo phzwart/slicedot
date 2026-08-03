@@ -499,11 +499,27 @@ def phenix_data_weight(G_data: np.ndarray, G_geom: np.ndarray,
     return float(wxc_scale) * ng / nd
 
 
-def _geom_satisfied(geom, X: np.ndarray, slack: float, tol: float = GEOM_TOL) -> bool:
+def _geom_satisfied(
+    geom,
+    X: np.ndarray,
+    slack: float,
+    tol: float = GEOM_TOL,
+    slack_kinds: dict | None = None,
+) -> bool:
     """True when distance / planar / chiral residuals sit inside the slack well."""
     info = geom.residual(X)
-    s = float(slack)
     t = float(tol)
+    if slack_kinds is not None:
+        sk = {k: float(v) for k, v in slack_kinds.items()}
+        return (
+            float(info["bond"]["max"]) <= sk.get("bond", 0.0) + t
+            and float(info["angle"]["max"]) <= sk.get("angle", 0.0) + t
+            and float(info["torsion14"]["max"]) <= sk.get("torsion14", 0.0) + t
+            and float(info["planar"]["max"]) <= 5.0 * t + sk.get("planar", 0.0)
+            and float(info["chiral"]["max"]) <= 5.0 * t + sk.get("chiral", 0.0)
+            and float(info["bump"]["max"]) <= sk.get("bump", 0.0) + t
+        )
+    s = float(slack)
     return (
         float(info["distance_max_A"]) <= s + t
         and float(info["planar"]["max"]) <= 5.0 * t + s
@@ -512,13 +528,118 @@ def _geom_satisfied(geom, X: np.ndarray, slack: float, tol: float = GEOM_TOL) ->
     )
 
 
-def run_cleanup(scene, X0, *, seed: int = 0):
+def _fmt_geom_line(
+    info: dict,
+    *,
+    slack: float | None = None,
+    slack_kinds: dict | None = None,
+) -> str:
+    """Compact geometry residual string for ADMM logs."""
+    bond = info["bond"]
+    ang = info["angle"]
+    t14 = info["torsion14"]
+    pl = info["planar"]
+    ch = info["chiral"]
+    bump = info["bump"]
+    parts = [
+        f"dmax={info['distance_max_A']:.3f}",
+        f"bond={bond['rms']:.3f}/{bond['max']:.3f}",
+        f"ang={ang['rms']:.3f}/{ang['max']:.3f}",
+        f"t14={t14['rms']:.3f}/{t14['max']:.3f}",
+        f"plan={pl['rms']:.3f}/{pl['max']:.3f}",
+        f"chir={ch['rms']:.3f}/{ch['max']:.3f}",
+        f"bump={bump['max']:.3f}(n={bump.get('active', 0)})",
+        f"wrms={info['weighted_rms']:.3g}",
+    ]
+    if slack_kinds is not None:
+        parts.insert(
+            0,
+            "slack("
+            f"b={float(slack_kinds.get('bond', 0)):.2f},"
+            f"a={float(slack_kinds.get('angle', 0)):.2f},"
+            f"p={float(slack_kinds.get('planar', 0)):.2f},"
+            f"c={float(slack_kinds.get('chiral', 0)):.2f})",
+        )
+    elif slack is not None:
+        parts.insert(0, f"slack={float(slack):.3f}")
+    return "  ".join(parts)
+
+
+# Named-atom terminal flat-bottoms: 0.05 Å bonds, ~10° angles (≈0.15 Å as 1–3),
+# matching planar / torsion / bump, and a modest chiral-volume dead zone.
+NAMED_ANGLE_SLACK_10DEG_A = 0.15
+NAMED_SLACK_KINDS0 = {
+    "bond": 0.35,
+    "angle": 0.50,
+    "torsion14": 0.50,
+    "planar": 0.35,
+    "bump": 0.35,
+    "chiral": 0.80,
+}
+NAMED_SLACK_KINDS1 = {
+    "bond": 0.05,
+    "angle": NAMED_ANGLE_SLACK_10DEG_A,
+    "torsion14": NAMED_ANGLE_SLACK_10DEG_A,
+    "planar": 0.05,
+    "bump": 0.05,
+    "chiral": 0.25,
+}
+
+
+def _anneal_slack_kinds(t: int, T: int, kinds0: dict, kinds1: dict) -> dict:
+    return {
+        k: _admm_slack(t, T=T, s0=float(kinds0[k]), s1=float(kinds1[k]))
+        for k in kinds1
+    }
+
+
+def run_cleanup(
+    scene,
+    X0,
+    *,
+    seed: int = 0,
+    log_every: int = 10,
+    named_atoms: bool = False,
+):
     """Consensus ADMM: OT + L1 + annealed P_restr (phenol-style finish).
 
     Density ceilings: reject updates with OT > ``OT_CEIL_FACTOR × OT_start`` or
     L1 > ``L1_CEIL_FACTOR × L1_start``.  After slack anneal, stop only once
     geometry is satisfied at the current slack (blind; not argmin vs truth).
+
+    ``named_atoms=True`` uses a gentler schedule for already-labelled chemical
+    models (RDKit conformers, etc.): smaller OT/L1 steps, stronger geometry
+    consensus, and a terminal P_restr at bond≤0.05 Å / angle≈10° (not forced
+    slack=0, which was destroying density-feasible placements).
     """
+    import time as _time
+
+    if named_atoms:
+        slack0, slack1 = 0.35, 0.05
+        slack_kinds0 = dict(NAMED_SLACK_KINDS0)
+        slack_kinds1 = dict(NAMED_SLACK_KINDS1)
+        anneal_T = 100
+        max_steps = anneal_T + 80
+        ot_lr0, ot_lr1 = 0.04, 0.004
+        l1_lr = 0.03
+        w_g = 2.5
+        ot_ceil_factor = 2.0
+        l1_ceil_factor = 1.5
+        force_terminal_slack0 = False
+        geom_ok_patience = 12
+    else:
+        slack0, slack1 = float(CLEANUP_SLACK0), float(CLEANUP_SLACK1)
+        slack_kinds0 = slack_kinds1 = None
+        anneal_T = int(CLEANUP_ANNEAL)
+        max_steps = max(int(CLEANUP_MIN_STEPS), anneal_T + 50)
+        ot_lr0, ot_lr1 = float(ADMM_OT_LR0), float(ADMM_OT_LR1)
+        l1_lr = float(L1_LR)
+        w_g = float(GEOM_CONSENSUS_WEIGHT)
+        ot_ceil_factor = float(OT_CEIL_FACTOR)
+        l1_ceil_factor = float(L1_CEIL_FACTOR)
+        force_terminal_slack0 = False
+        geom_ok_patience = int(GEOM_OK_PATIENCE)
+
     X_true = scene["X_true"]
     w = scene["w"]
     ot = scene["ot"]
@@ -526,15 +647,18 @@ def run_cleanup(scene, X0, *, seed: int = 0):
     geom = scene["geom"]
     namer = scene["namer"]
     sig = scene["sigma"]
+    prev_chiral_w = float(geom.w.get("chiral", 0.1))
+    if named_atoms:
+        geom.w["chiral"] = min(prev_chiral_w, 0.05)
     z = np.asarray(X0, dtype=np.float64).copy()
     u_ot = np.zeros_like(z)
     u_l1 = np.zeros_like(z)
     u_g = np.zeros_like(z)
-    opt_ot = Adam(z.shape, lr=ADMM_OT_LR0)
-    opt_l1 = Adam(z.shape, lr=L1_LR)
+    opt_ot = Adam(z.shape, lr=ot_lr0)
+    opt_l1 = Adam(z.shape, lr=l1_lr)
     rng = np.random.default_rng(int(seed) + 17)
-    w_g = float(GEOM_CONSENSUS_WEIGHT)
     w_sum = 2.0 + w_g
+    log_every = max(int(log_every), 1)
 
     def _vg_ot(X, wt):
         return vg_ot(ot, X, wt, sig)
@@ -545,34 +669,104 @@ def run_cleanup(scene, X0, *, seed: int = 0):
     E0, _ = _vg_ot(z, w)
     E0 = float(E0)
     L10 = float(_vg_l1(z, w)[0])
-    ot_ceil = float(OT_CEIL_FACTOR) * max(E0, 1e-12)
-    l1_ceil = float(L1_CEIL_FACTOR) * max(L10, 1e-12)
+    ot_ceil = float(ot_ceil_factor) * max(E0, 1e-12)
+    l1_ceil = float(l1_ceil_factor) * max(L10, 1e-12)
     best_ot = E0
+    best_l1 = L10
+    best_rmsd = aut_rmsd(z, X_true, namer)
     energies = [E0]
     l1_energies = [L10]
     steps = [0.0]
-    true_rmsds = [aut_rmsd(z, X_true, namer)]
+    true_rmsds = [best_rmsd]
     poses = [z.copy()]
     slack_hist: list[float] = []
     beta_hist: list[float] = []
     geom_dist_max: list[float] = []
     n_ot_rejects = 0
     n_l1_rejects = 0
+    n_soft_accepts = 0
+    n_rollbacks = 0
 
     info0 = geom.residual(z)
     geom_dist_max.append(float(info0["distance_max_A"]))
 
-    T = CLEANUP_ANNEAL
-    max_steps = max(CLEANUP_MIN_STEPS, T + 50)
+    T = int(anneal_T)
     stagnant_step = 0
     geom_ok_streak = 0
     reason = "max_steps"
+    t0 = _time.perf_counter()
+
+    # Placeholders so the nested logger can close over current step state.
+    E_z, E_l1, ds = E0, L10, 0.0
+    slack_t, beta_t, lr_ot_t = float(slack0), float(GEOM_BETA_LOW), float(ot_lr0)
+    kinds_t = dict(slack_kinds0) if slack_kinds0 is not None else None
+    info = info0
+
+    print(
+        f"  [ADMM] start  N={z.shape[0]}  OT₀={E0:.5g}  L1₀={L10:.5g}  "
+        f"ceil OT×{ot_ceil_factor:g}={ot_ceil:.5g}  L1×{l1_ceil_factor:g}={l1_ceil:.5g}"
+        + ("  named_atoms" if named_atoms else ""),
+        flush=True,
+    )
+    if slack_kinds1 is not None:
+        print(
+            f"  [ADMM] schedule  anneal={T}  max_steps={max_steps}  "
+            f"slack_kinds bond {slack_kinds0['bond']:g}→{slack_kinds1['bond']:g} Å  "
+            f"angle {slack_kinds0['angle']:g}→{slack_kinds1['angle']:g} Å(~10°)  "
+            f"planar {slack_kinds0['planar']:g}→{slack_kinds1['planar']:g}  "
+            f"chiral {slack_kinds0['chiral']:g}→{slack_kinds1['chiral']:g}  "
+            f"lr_OT {ot_lr0:g}→{ot_lr1:g}  w_geom={w_g:g}",
+            flush=True,
+        )
+    else:
+        print(
+            f"  [ADMM] schedule  anneal={T}  max_steps={max_steps}  "
+            f"slack {slack0:g}→{slack1:g}  "
+            f"lr_OT {ot_lr0:g}→{ot_lr1:g}  "
+            f"β_geom={GEOM_BETA_LOW:g}…{GEOM_BETA_HIGH:g}→{GEOM_BETA_FINAL:g}  "
+            f"w_geom={w_g:g}",
+            flush=True,
+        )
+    print(
+        f"  [ADMM] step 0  OT={E0:.5g}  L1={L10:.5g}  "
+        f"RMSD={best_rmsd:.4f} Å  "
+        f"{_fmt_geom_line(info0, slack=slack0, slack_kinds=kinds_t)}",
+        flush=True,
+    )
+
+    def _log_step(t_idx: int, *, force: bool = False, tag: str = ""):
+        if not force and (t_idx % log_every != 0):
+            return
+        phase = "anneal" if t_idx < T else "settle"
+        ok = (
+            _geom_satisfied(geom, z, slack_t, slack_kinds=kinds_t)
+            if t_idx > 0 else False
+        )
+        prefix = f"  [ADMM] step {t_idx}"
+        if tag:
+            prefix += f" {tag}"
+        print(
+            f"{prefix}  phase={phase}  "
+            f"OT={E_z:.5g} ({100.0 * E_z / ot_ceil:.0f}%ceil)  "
+            f"L1={E_l1:.5g} ({100.0 * E_l1 / l1_ceil:.0f}%ceil)  "
+            f"RMSD={true_rmsds[-1]:.4f} Å  Δx̄={ds:.4f} Å  "
+            f"β={beta_t:.2f}  lr={lr_ot_t:.3g}  "
+            f"rejects OT/L1/soft/roll={n_ot_rejects}/{n_l1_rejects}/"
+            f"{n_soft_accepts}/{n_rollbacks}  "
+            f"geom_ok={int(ok)}×{geom_ok_streak}  "
+            f"{_fmt_geom_line(info, slack=slack_t, slack_kinds=kinds_t)}",
+            flush=True,
+        )
 
     for t in range(max_steps):
         z_prev = z.copy()
         u_ot_prev, u_l1_prev, u_g_prev = u_ot.copy(), u_l1.copy(), u_g.copy()
-        slack_t = _admm_slack(t, T=T)
-        lr_ot_t = _admm_ot_lr(t, T=T)
+        slack_t = _admm_slack(t, T=T, s0=slack0, s1=slack1)
+        if slack_kinds0 is not None and slack_kinds1 is not None:
+            kinds_t = _anneal_slack_kinds(t, T, slack_kinds0, slack_kinds1)
+        else:
+            kinds_t = None
+        lr_ot_t = _admm_ot_lr(t, T=T, lr0=ot_lr0, lr1=ot_lr1)
         opt_ot.lr = lr_ot_t
         if t >= T:
             beta_t = float(GEOM_BETA_FINAL)
@@ -588,7 +782,14 @@ def run_cleanup(scene, X0, *, seed: int = 0):
         x_l1 = opt_l1.step(y_l1, G_l1)
 
         y_g = z - u_g
-        x_hat, _, _ = geom.project(y_g, tol=GEOM_TOL, max_iter=80, slack=slack_t)
+        if kinds_t is not None:
+            x_hat, _, _ = geom.project(
+                y_g, tol=GEOM_TOL, max_iter=80, slack_kinds=kinds_t,
+            )
+        else:
+            x_hat, _, _ = geom.project(
+                y_g, tol=GEOM_TOL, max_iter=80, slack=slack_t,
+            )
         x_g = y_g + beta_t * (x_hat - y_g)
 
         z = (x_ot + x_l1 + w_g * x_g) / w_sum
@@ -606,6 +807,7 @@ def run_cleanup(scene, X0, *, seed: int = 0):
         E_z = float(E_z)
         E_l1, _ = _vg_l1(z, w)
         E_l1 = float(E_l1)
+        guard_tag = ""
 
         def _rollback():
             nonlocal z, u_ot, u_l1, u_g, E_z, E_l1
@@ -617,6 +819,7 @@ def run_cleanup(scene, X0, *, seed: int = 0):
         # Density guard: never accept a step that leaves the OT/L1 envelope.
         # Prefer a lighter geom blend over dropping geometry entirely.
         if E_z > ot_ceil or E_l1 > l1_ceil:
+            which = "OT" if E_z > ot_ceil else "L1"
             if E_z > ot_ceil:
                 n_ot_rejects += 1
             else:
@@ -631,66 +834,202 @@ def run_cleanup(scene, X0, *, seed: int = 0):
                 u_g = u_g_prev + (x_g - z)
                 E_z = float(E_s)
                 E_l1 = float(L_s)
+                n_soft_accepts += 1
+                guard_tag = f"soft←{which}"
             else:
                 _rollback()
+                n_rollbacks += 1
+                guard_tag = f"rollback←{which}"
 
         ds = float(np.linalg.norm(z - z_prev, axis=1).mean())
         info = geom.residual(z)
         dmax = float(info["distance_max_A"])
+        rms_t = aut_rmsd(z, X_true, namer)
         best_ot = min(best_ot, E_z)
+        best_l1 = min(best_l1, E_l1)
+        best_rmsd = min(best_rmsd, rms_t)
         poses.append(z.copy())
         energies.append(E_z)
         l1_energies.append(E_l1)
         steps.append(ds)
-        true_rmsds.append(aut_rmsd(z, X_true, namer))
+        true_rmsds.append(rms_t)
         slack_hist.append(slack_t)
         beta_hist.append(beta_t)
         geom_dist_max.append(dmax)
 
+        if t + 1 >= T:
+            if _geom_satisfied(geom, z, slack_t, slack_kinds=kinds_t):
+                geom_ok_streak += 1
+            else:
+                geom_ok_streak = 0
+            if ds < STEP_ATOL:
+                stagnant_step += 1
+            else:
+                stagnant_step = 0
+
+        # Log regularly; also force at anneal→settle and on the first
+        # density-guard event after a quiet stretch (avoid rollback spam).
+        force_log = (t + 1 == T) or (t == 0)
+        if guard_tag and (t == 0 or steps[-2] > 1e-12 or (t + 1) % log_every == 0):
+            force_log = True
+        _log_step(t + 1, force=force_log, tag=guard_tag)
+
         if t + 1 < T:
             continue
 
-        # Post-anneal: require geometry inside the slack well, then settle.
-        if _geom_satisfied(geom, z, slack_t):
-            geom_ok_streak += 1
-        else:
-            geom_ok_streak = 0
-        if ds < STEP_ATOL:
-            stagnant_step += 1
-        else:
-            stagnant_step = 0
-        if geom_ok_streak >= GEOM_OK_PATIENCE:
+        if geom_ok_streak >= geom_ok_patience:
             reason = "geom_ok"
             break
         if geom_ok_streak >= 3 and stagnant_step >= ADMM_PATIENCE:
             reason = "geom_ok_step"
             break
 
-    # Final density-feasible geometry polish: try tight → looser slack and keep
-    # the tightest project that stays under the OT/L1 ceilings.
+    # Final density-feasible geometry polish.
     polished = False
     polish_slack = None
-    for slack_p in (0.0, 0.05, 0.10, float(CLEANUP_SLACK1)):
+    polish_kinds = None
+    if slack_kinds1 is not None:
+        # Named atoms: terminal bond≤0.05 Å / angle≈10°, never force slack=0.
+        kinds_trials = (
+            dict(slack_kinds1),
+            {**slack_kinds1, "bond": 0.08, "angle": 0.20, "torsion14": 0.20,
+             "planar": 0.08, "bump": 0.08, "chiral": 0.35},
+        )
+        print(
+            "  [ADMM] terminal P_restr  trying named slack_kinds "
+            f"(bond→{slack_kinds1['bond']:g} Å, angle→{slack_kinds1['angle']:g} Å≈10°) "
+            "under OT/L1 ceilings …",
+            flush=True,
+        )
+        for kinds_p in kinds_trials:
+            z_prev = z.copy()
+            Xp, wrms_p, nfev_p = geom.project(
+                z, tol=GEOM_TOL, max_iter=200, slack_kinds=kinds_p,
+            )
+            E_p, _ = _vg_ot(Xp, w)
+            L_p, _ = _vg_l1(Xp, w)
+            info_p = geom.residual(Xp)
+            ok_density = float(E_p) <= ot_ceil and float(L_p) <= l1_ceil
+            print(
+                f"  [ADMM]   kinds bond={kinds_p['bond']:g} angle={kinds_p['angle']:g}  "
+                f"OT={float(E_p):.5g} ({'ok' if float(E_p) <= ot_ceil else 'FAIL'})  "
+                f"L1={float(L_p):.5g} ({'ok' if float(L_p) <= l1_ceil else 'FAIL'})  "
+                f"RMSD={aut_rmsd(Xp, X_true, namer):.4f} Å  "
+                f"proj_wrms={float(wrms_p):.3g}  nfev={int(nfev_p)}  "
+                f"{_fmt_geom_line(info_p, slack_kinds=kinds_p)}",
+                flush=True,
+            )
+            if not ok_density:
+                continue
+            z = Xp
+            info = geom.residual(z)
+            poses.append(z.copy())
+            energies.append(float(E_p))
+            l1_energies.append(float(L_p))
+            steps.append(float(np.linalg.norm(z - z_prev, axis=1).mean()))
+            true_rmsds.append(aut_rmsd(z, X_true, namer))
+            slack_hist.append(float(kinds_p["bond"]))
+            beta_hist.append(1.0)
+            geom_dist_max.append(float(info["distance_max_A"]))
+            polished = True
+            polish_slack = float(kinds_p["bond"])
+            polish_kinds = dict(kinds_p)
+            reason = "geom_polish"
+            break
+    else:
+        slack_trials = (0.0, 0.05, 0.10, float(slack1)) if slack1 > 0 else (0.0, 0.05, 0.10)
+        slack_trials = tuple(sorted({float(s) for s in slack_trials}))
+        print(
+            f"  [ADMM] terminal P_restr  trying slack∈{{{', '.join(f'{s:g}' for s in slack_trials)}}} "
+            f"under OT/L1 ceilings …",
+            flush=True,
+        )
+        for slack_p in slack_trials:
+            z_prev = z.copy()
+            Xp, wrms_p, nfev_p = geom.project(
+                z, tol=GEOM_TOL, max_iter=200, slack=slack_p,
+            )
+            E_p, _ = _vg_ot(Xp, w)
+            L_p, _ = _vg_l1(Xp, w)
+            info_p = geom.residual(Xp)
+            ok_density = float(E_p) <= ot_ceil and float(L_p) <= l1_ceil
+            print(
+                f"  [ADMM]   slack={slack_p:g}  "
+                f"OT={float(E_p):.5g} ({'ok' if float(E_p) <= ot_ceil else 'FAIL'})  "
+                f"L1={float(L_p):.5g} ({'ok' if float(L_p) <= l1_ceil else 'FAIL'})  "
+                f"RMSD={aut_rmsd(Xp, X_true, namer):.4f} Å  "
+                f"proj_wrms={float(wrms_p):.3g}  nfev={int(nfev_p)}  "
+                f"{_fmt_geom_line(info_p, slack=slack_p)}",
+                flush=True,
+            )
+            if not ok_density:
+                continue
+            z = Xp
+            info = geom.residual(z)
+            poses.append(z.copy())
+            energies.append(float(E_p))
+            l1_energies.append(float(L_p))
+            steps.append(float(np.linalg.norm(z - z_prev, axis=1).mean()))
+            true_rmsds.append(aut_rmsd(z, X_true, namer))
+            slack_hist.append(float(slack_p))
+            beta_hist.append(1.0)
+            geom_dist_max.append(float(info["distance_max_A"]))
+            polished = True
+            polish_slack = float(slack_p)
+            reason = "geom_polish"
+            break
+
+    # Legacy named-atom force slack=0 (disabled for the new schedule).
+    if force_terminal_slack0 and (not polished or float(polish_slack or 1.0) > 0.0):
         z_prev = z.copy()
-        Xp, _, _ = geom.project(z, tol=GEOM_TOL, max_iter=120, slack=slack_p)
+        Xp, wrms_p, nfev_p = geom.project(
+            z, tol=GEOM_TOL, max_iter=400, slack=0.0,
+        )
         E_p, _ = _vg_ot(Xp, w)
         L_p, _ = _vg_l1(Xp, w)
-        if float(E_p) > ot_ceil or float(L_p) > l1_ceil:
-            continue
+        info_p = geom.residual(Xp)
+        print(
+            f"  [ADMM]   force slack=0  "
+            f"OT={float(E_p):.5g}  L1={float(L_p):.5g}  "
+            f"RMSD={aut_rmsd(Xp, X_true, namer):.4f} Å  "
+            f"proj_wrms={float(wrms_p):.3g}  nfev={int(nfev_p)}  "
+            f"{_fmt_geom_line(info_p, slack=0.0)}",
+            flush=True,
+        )
         z = Xp
-        info = geom.residual(z)
         poses.append(z.copy())
         energies.append(float(E_p))
         l1_energies.append(float(L_p))
         steps.append(float(np.linalg.norm(z - z_prev, axis=1).mean()))
         true_rmsds.append(aut_rmsd(z, X_true, namer))
-        slack_hist.append(float(slack_p))
+        slack_hist.append(0.0)
         beta_hist.append(1.0)
-        geom_dist_max.append(float(info["distance_max_A"]))
+        geom_dist_max.append(float(info_p["distance_max_A"]))
         polished = True
-        polish_slack = float(slack_p)
-        reason = "geom_polish"
-        break
+        polish_slack = 0.0
+        reason = "geom_polish_forced"
+
+    if prev_chiral_w is not None:
+        geom.w["chiral"] = prev_chiral_w
+
+    elapsed = _time.perf_counter() - t0
+    info_f = geom.residual(z)
+    print(
+        f"  [ADMM] done  steps={len(poses) - 1}  stop={reason}  "
+        f"{elapsed:.1f}s  OT {E0:.5g}→{energies[-1]:.5g} (best {best_ot:.5g})  "
+        f"L1 {L10:.5g}→{l1_energies[-1]:.5g} (best {best_l1:.5g})  "
+        f"RMSD {true_rmsds[0]:.4f}→{true_rmsds[-1]:.4f} "
+        f"(best {best_rmsd:.4f}) Å",
+        flush=True,
+    )
+    print(
+        f"  [ADMM]       rejects OT={n_ot_rejects}  L1={n_l1_rejects}  "
+        f"soft={n_soft_accepts}  rollback={n_rollbacks}  "
+        f"geom_polish={'yes' if polished else 'no'}"
+        + (f"@{polish_slack:g}" if polished else "")
+        + f"  {_fmt_geom_line(info_f)}",
+        flush=True,
+    )
 
     return {
         "poses": np.asarray(poses),
@@ -706,16 +1045,22 @@ def run_cleanup(scene, X0, *, seed: int = 0):
         "ot_ceil": ot_ceil,
         "l1_ceil": l1_ceil,
         "ot_best": float(best_ot),
-        "l1_best": float(min(l1_energies)),
+        "l1_best": float(best_l1),
+        "rmsd_best": float(best_rmsd),
         "geom_final_max": float(geom_dist_max[-1]),
         "geom_polished": bool(polished),
         "polish_slack": polish_slack,
         "n_ot_rejects": int(n_ot_rejects),
         "n_l1_rejects": int(n_l1_rejects),
+        "n_soft_accepts": int(n_soft_accepts),
+        "n_rollbacks": int(n_rollbacks),
         "n_steps": len(poses) - 1,
         "stop_reason": reason,
-        "method": "admm_ot_l1_geom",
+        "elapsed_s": float(elapsed),
+        "method": "admm_ot_l1_geom_named" if named_atoms else "admm_ot_l1_geom",
+        "named_atoms": bool(named_atoms),
     }
+
 
 
 def _minimize_map_geom(scene, X0, *, wxc_scale: float, max_steps: int = POLISH_STEPS):
@@ -1054,8 +1399,14 @@ def run_one(
     cleanup = run_cleanup(scene, named, seed=seed)
     X_admm = cleanup["poses"][-1].copy()
     print(
-        f"  [stage] ADMM done  steps={cleanup['n_steps']}  "
-        f"RMSD={cleanup['rmsds'][-1]:.4f} Å  stop={cleanup['stop_reason']}",
+        f"  [stage] ADMM summary  steps={cleanup['n_steps']}  "
+        f"stop={cleanup['stop_reason']}  "
+        f"RMSD={cleanup['rmsds'][-1]:.4f} Å  "
+        f"OT={cleanup['energies'][-1]:.5g}  L1={cleanup['l1_energies'][-1]:.5g}  "
+        f"rejects OT/L1/soft/roll="
+        f"{cleanup['n_ot_rejects']}/{cleanup['n_l1_rejects']}/"
+        f"{cleanup.get('n_soft_accepts', 0)}/{cleanup.get('n_rollbacks', 0)}  "
+        f"dmax={cleanup['geom_final_max']:.3f} Å",
         flush=True,
     )
     print("  [stage] L1+geom polish …", flush=True)
@@ -1076,6 +1427,7 @@ def run_one(
         "admm_final": float(cleanup["rmsds"][-1]),
         "polish_rmsd": float(polish["rmsds"][-1]),
         "named": named,
+        "admm": X_admm,
         "cleaned": X_clean,
         "free_steps": int(free["n_steps"]),
         "cleanup_steps": int(cleanup["n_steps"]),

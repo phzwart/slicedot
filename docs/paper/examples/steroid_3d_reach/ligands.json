@@ -1,0 +1,79 @@
+[
+  {
+    "slug": "fluticasone",
+    "label": "Fluticasone furoate",
+    "ccd": "GW6",
+    "mw": 538.576,
+    "note": "Marketed fluticasone form present in CCD (furoate)."
+  },
+  {
+    "slug": "fluticasone_propionate",
+    "label": "Fluticasone propionate",
+    "pubchem_cid": 444036,
+    "mw": 500.57,
+    "note": "Not a dedicated CCD entry; PubChem 3D."
+  },
+  {
+    "slug": "prednisone",
+    "label": "Prednisone",
+    "ccd": "PDN",
+    "mw": 358.428
+  },
+  {
+    "slug": "prednisolone",
+    "label": "Prednisolone",
+    "ccd": "TUA",
+    "mw": 360.444
+  },
+  {
+    "slug": "triamcinolone",
+    "label": "Triamcinolone acetonide",
+    "ccd": "1TA",
+    "mw": 434.498,
+    "note": "Common clinical form (acetonide)."
+  },
+  {
+    "slug": "clobetasol",
+    "label": "Clobetasol propionate",
+    "ccd": "XRD",
+    "mw": 466.97
+  },
+  {
+    "slug": "methylprednisolone",
+    "label": "Methylprednisolone",
+    "pubchem_cid": 6741,
+    "mw": 374.47,
+    "note": "Not a dedicated CCD entry; PubChem 3D."
+  },
+  {
+    "slug": "hydrocortisone",
+    "label": "Hydrocortisone (cortisol)",
+    "ccd": "HCY",
+    "mw": 362.46
+  },
+  {
+    "slug": "dexamethasone",
+    "label": "Dexamethasone",
+    "ccd": "DEX",
+    "mw": 392.461
+  },
+  {
+    "slug": "budesonide",
+    "label": "Budesonide",
+    "ccd": "8W5",
+    "mw": 430.534
+  },
+  {
+    "slug": "betamethasone",
+    "label": "Betamethasone",
+    "pubchem_cid": 9782,
+    "mw": 392.46,
+    "note": "16β-epimer of dexamethasone; PubChem 3D."
+  },
+  {
+    "slug": "mometasone",
+    "label": "Mometasone furoate",
+    "ccd": "MOF",
+    "mw": 521.429
+  }
+]

@@ -637,7 +637,9 @@ class WindowedSlicedOT(nn.Module):
                 [U0 @ _random_rotation(dtype, "cpu", gen).T for _ in range(A)],
                 dim=0,
             ).to(device)
-        return a.to(device), s, U
+        # Monte Carlo samples must not attach to x: otherwise autograd walks
+        # the full-map Gabor (V_abs ~ grid³) through a and OOMs.
+        return a.detach().to(device), s.detach(), U.detach()
 
     # ----------------------------------------------------------- spectra
     def _check_s(self, s: torch.Tensor, sigma_max: float) -> None:
@@ -774,6 +776,8 @@ class WindowedSlicedOT(nn.Module):
             a, s, U = self.sample_windows(x)
         else:
             a, s, U = windows
+            # Caller-supplied windows: still treat as MC samples (no ∂/∂a).
+            a, s, U = a.detach(), s.detach(), U.detach()
         self._check_s(s, sigma_max)
 
         C, _, r_prime, sigma_prime = window_atoms(x, sigma_t, a, s)
@@ -781,7 +785,9 @@ class WindowedSlicedOT(nn.Module):
             C = freeze_C.detach()
         Awin = a.shape[0]
         B, N, _ = x.shape
-        Tq_all = self._target_spectrum(a, s, U)                 # (A,L,K)
+        # Target spectra depend only on the map + (a,s,U); keep them off the graph.
+        with torch.no_grad():
+            Tq_all = self._target_spectrum(a, s, U)             # (A,L,K)
         backend = self.backend
         # Batch windows into the leading dimension when (for grid) σ' is common.
         L = U.shape[1]

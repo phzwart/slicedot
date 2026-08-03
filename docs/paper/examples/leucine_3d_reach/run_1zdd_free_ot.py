@@ -230,7 +230,7 @@ def run_global_ot(
     log_every: int = 25,
     label: str = "global",
 ):
-    """Full-domain free-atom OT (no localization).
+    """Full-domain free-atom OT with numpy Adam (no localization).
 
     Pass ``w`` for overcomplete free OT; leave ``scene["w"]`` as chemical weights.
     """
@@ -265,6 +265,88 @@ def run_global_ot(
         nn_rmsds.append(nn_rmsd(X, X_true))
         if E < best_E - max(1e-4, 1e-3 * abs(best_E)):
             best_E = float(E)
+            stagnant = 0
+        else:
+            stagnant += 1
+        if k % log_every == 0 or stagnant >= patience:
+            dt = time.perf_counter() - t0
+            print(
+                f"  [{label}] step {k}  OT={energies[-1]:.6g}  "
+                f"NN-RMSD={nn_rmsds[-1]:.4f} Å  "
+                f"({dt:.1f}s, stagnant={stagnant})",
+                flush=True,
+            )
+        if stagnant >= patience:
+            reason = "ot_loss_plateau"
+            break
+    return {
+        "X_final": X,
+        "poses": np.asarray(poses, dtype=np.float64),
+        "energies": np.asarray(energies, dtype=np.float64),
+        "nn_rmsds": np.asarray(nn_rmsds, dtype=np.float64),
+        "local_radii": np.full(len(energies), np.nan),
+        "n_steps": len(energies) - 1,
+        "stop_reason": reason,
+        "elapsed_s": time.perf_counter() - t0,
+        "best_E": float(best_E),
+    }
+
+
+def run_torch_sgd_ot(
+    scene,
+    X0,
+    *,
+    w=None,
+    lr: float = 0.1,
+    max_steps=MAX_STEPS,
+    patience=PATIENCE,
+    log_every: int = 25,
+    label: str = "sgd",
+):
+    """Post-landing refine with ``torch.optim.SGD`` on atom coordinates."""
+    X_true = scene["X_true"]
+    w = scene["w"] if w is None else np.asarray(w, dtype=np.float64)
+    ot = scene["ot"]
+    sig = float(scene["sigma"])
+    device = scene.get("device")
+    X0 = np.asarray(X0, dtype=np.float64)
+    if X0.shape[0] != w.shape[0]:
+        raise ValueError(
+            f"weight length {w.shape[0]} != atom count {X0.shape[0]}"
+        )
+    x = torch.nn.Parameter(
+        torch.tensor(X0, dtype=torch.float64, device=device)
+    )
+    wt = torch.tensor(w, dtype=torch.float64, device=device)
+    opt = torch.optim.SGD([x], lr=float(lr))
+
+    with torch.no_grad():
+        E0 = float(ot(x, wt, sig).detach().cpu())
+    X = x.detach().cpu().numpy()
+    energies = [E0]
+    nn_rmsds = [nn_rmsd(X, X_true)]
+    poses = [X.copy()]
+    best_E = energies[0]
+    stagnant = 0
+    reason = "max_steps"
+    t0 = time.perf_counter()
+    print(
+        f"  [{label}] step 0  OT={energies[0]:.6g}  NN-RMSD={nn_rmsds[0]:.4f} Å  "
+        f"(torch.optim.SGD lr={lr:g})",
+        flush=True,
+    )
+    for k in range(1, max_steps + 1):
+        opt.zero_grad(set_to_none=True)
+        loss = ot(x, wt, sig)
+        loss.backward()
+        opt.step()
+        E = float(loss.detach().cpu())
+        X = x.detach().cpu().numpy()
+        poses.append(X.copy())
+        energies.append(E)
+        nn_rmsds.append(nn_rmsd(X, X_true))
+        if E < best_E - max(1e-4, 1e-3 * abs(best_E)):
+            best_E = E
             stagnant = 0
         else:
             stagnant += 1
@@ -546,6 +628,19 @@ def main():
         help="Multiply free-atom count vs true structure (map unchanged). "
              "Model weights are uniform 1/N.",
     )
+    ap.add_argument(
+        "--sgd-lr", type=float, default=None,
+        help="After the global Adam land, continue with torch.optim.SGD at this "
+             "lr (e.g. 0.1). Default: off.",
+    )
+    ap.add_argument(
+        "--sgd-steps", type=int, default=MAX_STEPS,
+        help="Max SGD steps after landing (default: same as --max-steps).",
+    )
+    ap.add_argument(
+        "--sgd-patience", type=int, default=PATIENCE,
+        help="OT-loss plateau patience for the post-landing SGD phase.",
+    )
     args = ap.parse_args()
 
     if args.device == "auto":
@@ -614,8 +709,9 @@ def main():
     tag = f"{args.resolution:g}".replace(".", "p")
     stem = topo["ref_id"].lower()
     af_tag = f"_x{atom_factor:g}" if abs(atom_factor - 1.0) > 1e-12 else ""
+    sgd_tag = f"_sgd{args.sgd_lr:g}" if args.sgd_lr is not None else ""
     out_path = OUT / (
-        f"{stem}_free_ot_{tag}A_L{scene['n_dirs']}{af_tag}_seed{args.seed}.npz"
+        f"{stem}_free_ot_{tag}A_L{scene['n_dirs']}{af_tag}{sgd_tag}_seed{args.seed}.npz"
     )
     # Checkpoint after global so a killed local phase still leaves a usable pose.
     np.savez_compressed(
@@ -671,6 +767,22 @@ def main():
         )
         stages.append({"name": "spheres", "X_start": X_cur, "result": local_res})
         X_cur = local_res["X_final"].copy()
+
+    if args.sgd_lr is not None:
+        print(
+            f"\n=== Post-landing torch.optim.SGD  lr={args.sgd_lr:g}  "
+            f"max_steps={args.sgd_steps} ===",
+            flush=True,
+        )
+        sgd_res = run_torch_sgd_ot(
+            scene, X_cur, w=w_free,
+            lr=float(args.sgd_lr),
+            max_steps=int(args.sgd_steps),
+            patience=int(args.sgd_patience),
+            label="sgd",
+        )
+        stages.append({"name": "sgd", "X_start": X_cur, "result": sgd_res})
+        X_cur = sgd_res["X_final"].copy()
 
     prune = None
     if n_model != n_true:

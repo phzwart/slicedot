@@ -1,0 +1,226 @@
+data_XRD
+#
+
+_chem_comp.id                                   XRD
+_chem_comp.name                                 "Clobetasol propionate"
+_chem_comp.type                                 non-polymer
+_chem_comp.pdbx_type                            HETAIN
+_chem_comp.formula                              "C25 H32 Cl F O5"
+_chem_comp.mon_nstd_parent_comp_id              ?
+_chem_comp.pdbx_synonyms                        "(8alpha,11beta,14beta,16alpha,17alpha)-21-chloro-9-fluoro-11-hydroxy-16-methyl-3,20-dioxopregna-1,4-dien-17-yl propanoate"
+_chem_comp.pdbx_formal_charge                   0
+_chem_comp.pdbx_initial_date                    2021-01-07
+_chem_comp.pdbx_modified_date                   2021-11-08
+_chem_comp.pdbx_ambiguous_flag                  N
+_chem_comp.pdbx_release_status                  REL
+_chem_comp.pdbx_replaced_by                     ?
+_chem_comp.pdbx_replaces                        ?
+_chem_comp.formula_weight                       466.970
+_chem_comp.one_letter_code                      ?
+_chem_comp.three_letter_code                    XRD
+_chem_comp.pdbx_model_coordinates_details       ?
+_chem_comp.pdbx_model_coordinates_missing_flag  N
+_chem_comp.pdbx_ideal_coordinates_details       Corina
+_chem_comp.pdbx_ideal_coordinates_missing_flag  N
+_chem_comp.pdbx_model_coordinates_db_code       7LAD
+_chem_comp.pdbx_subcomponent_list               ?
+_chem_comp.pdbx_processing_site                 RCSB
+#   #
+loop_
+_chem_comp_atom.comp_id
+_chem_comp_atom.atom_id
+_chem_comp_atom.alt_atom_id
+_chem_comp_atom.type_symbol
+_chem_comp_atom.charge
+_chem_comp_atom.pdbx_align
+_chem_comp_atom.pdbx_aromatic_flag
+_chem_comp_atom.pdbx_leaving_atom_flag
+_chem_comp_atom.pdbx_stereo_config
+_chem_comp_atom.model_Cartn_x
+_chem_comp_atom.model_Cartn_y
+_chem_comp_atom.model_Cartn_z
+_chem_comp_atom.pdbx_model_Cartn_x_ideal
+_chem_comp_atom.pdbx_model_Cartn_y_ideal
+_chem_comp_atom.pdbx_model_Cartn_z_ideal
+_chem_comp_atom.pdbx_component_atom_id
+_chem_comp_atom.pdbx_component_comp_id
+_chem_comp_atom.pdbx_ordinal
+XRD  C1    C1   C   0  1  N  N  N  14.362  15.555  17.629  -4.161  -0.832   1.454  C1    XRD   1  
+XRD  C2    C2   C   0  1  N  N  S  14.778  14.800  16.452  -3.522  -0.595   0.130  C2    XRD   2  
+XRD  C3    C3   C   0  1  N  N  N  13.630  14.173  15.738  -4.340   0.257  -0.795  C3    XRD   3  
+XRD  C4    C4   C   0  1  N  N  N  12.314  14.447  16.100  -5.559   0.684  -0.495  C4    XRD   4  
+XRD  C5    C5   C   0  1  N  N  N  12.017  15.239  17.205  -6.171   0.351   0.800  C5    XRD   5  
+XRD  C6    C6   C   0  1  N  N  N  13.038  15.787  17.952  -5.374  -0.412   1.778  C6    XRD   6  
+XRD  C10   C7   C   0  1  N  N  R  15.387  15.768  15.367  -2.143   0.050   0.303  C10   XRD   7  
+XRD  C11   C8   C   0  1  N  N  S  16.079  16.062  12.968  -0.136   0.857  -0.845  C11   XRD   8  
+XRD  C12   C9   C   0  1  N  N  S  17.325  16.899  13.351   0.694  -0.235  -0.120  C12   XRD   9  
+XRD  C13   C10  C   0  1  N  N  N  17.086  17.569  14.711   0.169  -0.320   1.273  C13   XRD  10  
+XRD  C14   C11  C   0  1  N  N  S  16.630  16.577  15.802  -1.268  -0.854   1.167  C14   XRD  11  
+XRD  C15   C12  C   0  1  N  N  N  16.364  15.827  11.453   0.679   1.068  -2.126  C15   XRD  12  
+XRD  C16   C13  C   0  1  N  N  S  17.352  16.911  10.899   2.145   1.049  -1.611  C16   XRD  13  
+XRD  C17   C14  C   0  1  N  N  R  17.687  17.787  12.123   2.126   0.277  -0.238  C17   XRD  14  
+XRD  C19   C15  C   0  1  N  N  N  15.771  13.760  16.899  -3.319  -1.954  -0.543  C19   XRD  15  
+XRD  C22   C16  C   0  1  N  N  N  18.541  15.996  13.534   0.557  -1.568  -0.858  C22   XRD  16  
+XRD  C23   C17  C   0  1  N  N  N  18.442  16.229  10.067   3.050   0.356  -2.632  C23   XRD  17  
+XRD  C24   C18  C   0  1  N  N  N  19.096  18.359  12.020   3.058  -0.906  -0.292  C24   XRD  18  
+XRD  C26   C19  C   0  1  N  N  N  19.394  19.808  12.384   3.839  -1.306   0.933  C26   XRD  19  
+XRD  C29   C20  C   0  1  N  N  N  16.760  19.917  11.101   3.721   1.733   0.769  C29   XRD  20  
+XRD  C31   C21  C   0  1  N  N  N  15.778  21.048  11.266   4.227   2.586   1.904  C31   XRD  21  
+XRD  C32   C22  C   0  1  N  N  N  14.514  20.461  11.860   5.626   3.106   1.568  C32   XRD  22  
+XRD  C7    C23  C   0  1  N  N  N  13.967  13.322  14.537  -3.731   0.653  -2.127  C7    XRD  23  
+XRD  C8    C24  C   0  1  N  N  N  14.518  14.238  13.470  -2.351   1.261  -1.858  C8    XRD  24  
+XRD  C9    C25  C   0  1  N  N  S  15.702  15.010  14.030  -1.521   0.283  -1.083  C9    XRD  25  
+XRD  F20   F1   F   0  1  N  N  N  14.505  16.755  15.171  -2.291   1.289   0.936  F20   XRD  26  
+XRD  O18   O1   O   0  1  N  N  N  10.833  15.473  17.538  -7.303   0.711   1.064  O18   XRD  27  
+XRD  O21   O2   O   0  1  N  N  N  17.644  15.638  16.215  -1.239  -2.161   0.592  O21   XRD  28  
+XRD  O25   O3   O   0  1  N  N  N  20.037  17.692  11.592   3.178  -1.534  -1.316  O25   XRD  29  
+XRD  O28   O4   O   0  1  N  N  N  16.789  18.894  12.142   2.507   1.167   0.844  O28   XRD  30  
+XRD  O30   O5   O   0  1  N  N  N  17.521  19.843  10.134   4.410   1.559  -0.208  O30   XRD  31  
+XRD  CL27  CL1  CL  0  0  N  N  N  18.658  20.417  13.906   4.960  -2.656   0.517  CL27  XRD  32  
+XRD  H1    H1   H   0  1  N  N  N  15.126  15.952  18.280  -3.603  -1.386   2.195  H1    XRD  33  
+XRD  H4    H2   H   0  1  N  N  N  11.507  14.036  15.511  -6.107   1.282  -1.208  H4    XRD  34  
+XRD  H6    H3   H   0  1  N  N  N  12.800  16.408  18.803  -5.779  -0.630   2.755  H6    XRD  35  
+XRD  H11   H4   H   0  1  N  N  N  15.247  16.782  12.983  -0.169   1.769  -0.249  H11   XRD  36  
+XRD  H131  H5   H   0  0  N  N  N  18.024  18.042  15.038   0.766  -1.024   1.853  H131  XRD  37  
+XRD  H132  H6   H   0  0  N  N  N  16.309  18.339  14.591   0.196   0.665   1.741  H132  XRD  38  
+XRD  H14   H7   H   0  1  N  N  N  16.335  17.174  16.678  -1.699  -0.915   2.166  H14   XRD  39  
+XRD  H151  H8   H   0  0  N  N  N  15.418  15.882  10.895   0.507   0.255  -2.831  H151  XRD  40  
+XRD  H152  H9   H   0  0  N  N  N  16.810  14.830  11.320   0.440   2.029  -2.581  H152  XRD  41  
+XRD  H16   H10  H   0  1  N  N  N  16.770  17.540  10.209   2.492   2.066  -1.433  H16   XRD  42  
+XRD  H191  H11  H   0  0  N  N  N  15.306  13.108  17.653  -4.256  -2.280  -0.992  H191  XRD  43  
+XRD  H193  H12  H   0  0  N  N  N  16.083  13.155  16.035  -2.556  -1.866  -1.317  H193  XRD  44  
+XRD  H192  H13  H   0  0  N  N  N  16.650  14.256  17.335  -2.999  -2.683   0.201  H192  XRD  45  
+XRD  H221  H14  H   0  0  N  N  N  18.375  15.325  14.390   1.094  -1.515  -1.805  H221  XRD  46  
+XRD  H222  H15  H   0  0  N  N  N  18.694  15.398  12.624   0.976  -2.367  -0.247  H222  XRD  47  
+XRD  H223  H16  H   0  0  N  N  N  19.432  16.614  13.720  -0.496  -1.771  -1.049  H223  XRD  48  
+XRD  H231  H17  H   0  0  N  N  N  19.136  16.989   9.678   3.145   0.983  -3.518  H231  XRD  49  
+XRD  H233  H18  H   0  0  N  N  N  18.994  15.518  10.699   4.035   0.194  -2.193  H233  XRD  50  
+XRD  H232  H19  H   0  0  N  N  N  17.979  15.691   9.227   2.615  -0.604  -2.911  H232  XRD  51  
+XRD  H262  H20  H   0  0  N  N  N  20.485  19.913  12.475   4.416  -0.452   1.291  H262  XRD  52  
+XRD  H261  H21  H   0  0  N  N  N  19.032  20.441  11.561   3.151  -1.632   1.713  H261  XRD  53  
+XRD  H311  H22  H   0  0  N  N  N  16.192  21.811  11.941   3.552   3.429   2.054  H311  XRD  54  
+XRD  H312  H23  H   0  0  N  N  N  15.559  21.503  10.289   4.270   1.989   2.816  H312  XRD  55  
+XRD  H321  H24  H   0  0  N  N  N  13.768  21.258  11.997   6.300   2.263   1.419  H321  XRD  56  
+XRD  H323  H25  H   0  0  N  N  N  14.111  19.695  11.181   5.583   3.702   0.657  H323  XRD  57  
+XRD  H322  H26  H   0  0  N  N  N  14.745  20.004  12.833   5.991   3.722   2.389  H322  XRD  58  
+XRD  H71   H27  H   0  1  N  N  N  13.061  12.818  14.168  -3.628  -0.228  -2.761  H71   XRD  59  
+XRD  H72   H28  H   0  1  N  N  N  14.720  12.568  14.810  -4.369   1.387  -2.619  H72   XRD  60  
+XRD  H82   H29  H   0  1  N  N  N  13.736  14.944  13.153  -1.867   1.474  -2.811  H82   XRD  61  
+XRD  H81   H30  H   0  1  N  N  N  14.845  13.640  12.606  -2.451   2.185  -1.288  H81   XRD  62  
+XRD  H9    H31  H   0  1  N  N  N  16.550  14.328  14.191  -1.442  -0.652  -1.637  H9    XRD  63  
+XRD  HO21  H32  H   0  0  N  N  N  17.291  15.064  16.885  -0.701  -2.796   1.086  HO21  XRD  64  
+#   #
+loop_
+_chem_comp_bond.comp_id
+_chem_comp_bond.atom_id_1
+_chem_comp_bond.atom_id_2
+_chem_comp_bond.value_order
+_chem_comp_bond.pdbx_aromatic_flag
+_chem_comp_bond.pdbx_stereo_config
+_chem_comp_bond.pdbx_ordinal
+XRD  C23  C16   SING  N  N   1  
+XRD  O30  C29   DOUB  N  N   2  
+XRD  C16  C15   SING  N  N   3  
+XRD  C16  C17   SING  N  N   4  
+XRD  C29  C31   SING  N  N   5  
+XRD  C29  O28   SING  N  N   6  
+XRD  C31  C32   SING  N  N   7  
+XRD  C15  C11   SING  N  N   8  
+XRD  O25  C24   DOUB  N  N   9  
+XRD  C24  C17   SING  N  N  10  
+XRD  C24  C26   SING  N  N  11  
+XRD  C17  O28   SING  N  N  12  
+XRD  C17  C12   SING  N  N  13  
+XRD  C26  CL27  SING  N  N  14  
+XRD  C11  C12   SING  N  N  15  
+XRD  C11  C9    SING  N  N  16  
+XRD  C12  C22   SING  N  N  17  
+XRD  C12  C13   SING  N  N  18  
+XRD  C8   C9    SING  N  N  19  
+XRD  C8   C7    SING  N  N  20  
+XRD  C9   C10   SING  N  N  21  
+XRD  C7   C3    SING  N  N  22  
+XRD  C13  C14   SING  N  N  23  
+XRD  F20  C10   SING  N  N  24  
+XRD  C10  C14   SING  N  N  25  
+XRD  C10  C2    SING  N  N  26  
+XRD  C3   C4    DOUB  N  N  27  
+XRD  C3   C2    SING  N  N  28  
+XRD  C14  O21   SING  N  N  29  
+XRD  C4   C5    SING  N  N  30  
+XRD  C2   C19   SING  N  N  31  
+XRD  C2   C1    SING  N  N  32  
+XRD  C5   O18   DOUB  N  N  33  
+XRD  C5   C6    SING  N  N  34  
+XRD  C1   C6    DOUB  N  N  35  
+XRD  C1   H1    SING  N  N  36  
+XRD  C4   H4    SING  N  N  37  
+XRD  C6   H6    SING  N  N  38  
+XRD  C11  H11   SING  N  N  39  
+XRD  C13  H131  SING  N  N  40  
+XRD  C13  H132  SING  N  N  41  
+XRD  C14  H14   SING  N  N  42  
+XRD  C15  H151  SING  N  N  43  
+XRD  C15  H152  SING  N  N  44  
+XRD  C16  H16   SING  N  N  45  
+XRD  C19  H191  SING  N  N  46  
+XRD  C19  H193  SING  N  N  47  
+XRD  C19  H192  SING  N  N  48  
+XRD  C22  H221  SING  N  N  49  
+XRD  C22  H222  SING  N  N  50  
+XRD  C22  H223  SING  N  N  51  
+XRD  C23  H231  SING  N  N  52  
+XRD  C23  H233  SING  N  N  53  
+XRD  C23  H232  SING  N  N  54  
+XRD  C26  H262  SING  N  N  55  
+XRD  C26  H261  SING  N  N  56  
+XRD  C31  H311  SING  N  N  57  
+XRD  C31  H312  SING  N  N  58  
+XRD  C32  H321  SING  N  N  59  
+XRD  C32  H323  SING  N  N  60  
+XRD  C32  H322  SING  N  N  61  
+XRD  C7   H71   SING  N  N  62  
+XRD  C7   H72   SING  N  N  63  
+XRD  C8   H82   SING  N  N  64  
+XRD  C8   H81   SING  N  N  65  
+XRD  C9   H9    SING  N  N  66  
+XRD  O21  HO21  SING  N  N  67  
+#   #
+loop_
+_pdbx_chem_comp_descriptor.comp_id
+_pdbx_chem_comp_descriptor.type
+_pdbx_chem_comp_descriptor.program
+_pdbx_chem_comp_descriptor.program_version
+_pdbx_chem_comp_descriptor.descriptor
+XRD  SMILES            ACDLabs               12.01  "C1=CC(C=C3C1(C)C2(C(CC4(C(C2CC3)CC(C4(OC(CC)=O)C(CCl)=O)C)C)O)F)=O"  
+XRD  InChI             InChI                 1.03   "InChI=1S/C25H32ClFO5/c1-5-21(31)32-25(20(30)13-26)14(2)10-18-17-7-6-15-11-16(28)8-9-22(15,3)24(17,27)19(29)12-23(18,25)4/h8-9,11,14,17-19,29H,5-7,10,12-13H2,1-4H3/t14-,17-,18-,19-,22-,23-,24-,25-/m0/s1"  
+XRD  InChIKey          InChI                 1.03   CBGUOGMQLZIXBE-XGQKBEPLSA-N  
+XRD  SMILES_CANONICAL  CACTVS                3.385  "CCC(=O)O[C@@]1([C@@H](C)C[C@H]2[C@@H]3CCC4=CC(=O)C=C[C@]4(C)[C@@]3(F)[C@@H](O)C[C@]12C)C(=O)CCl"  
+XRD  SMILES            CACTVS                3.385  "CCC(=O)O[C]1([CH](C)C[CH]2[CH]3CCC4=CC(=O)C=C[C]4(C)[C]3(F)[CH](O)C[C]12C)C(=O)CCl"  
+XRD  SMILES_CANONICAL  "OpenEye OEToolkits"  2.0.7  "CCC(=O)O[C@@]1([C@H](C[C@@H]2[C@@]1(C[C@@H]([C@]3([C@H]2CCC4=CC(=O)C=C[C@@]43C)F)O)C)C)C(=O)CCl"  
+XRD  SMILES            "OpenEye OEToolkits"  2.0.7  "CCC(=O)OC1(C(CC2C1(CC(C3(C2CCC4=CC(=O)C=CC43C)F)O)C)C)C(=O)CCl"  
+#   #
+loop_
+_pdbx_chem_comp_identifier.comp_id
+_pdbx_chem_comp_identifier.type
+_pdbx_chem_comp_identifier.program
+_pdbx_chem_comp_identifier.program_version
+_pdbx_chem_comp_identifier.identifier
+XRD  "SYSTEMATIC NAME"  ACDLabs               12.01  "(8alpha,11beta,14beta,16alpha,17alpha)-21-chloro-9-fluoro-11-hydroxy-16-methyl-3,20-dioxopregna-1,4-dien-17-yl propanoate"  
+XRD  "SYSTEMATIC NAME"  "OpenEye OEToolkits"  2.0.7  "[(8~{S},9~{R},10~{S},11~{S},13~{S},14~{S},16~{S},17~{R})-17-(2-chloranylethanoyl)-9-fluoranyl-10,13,16-trimethyl-11-oxidanyl-3-oxidanylidene-6,7,8,11,12,14,15,16-octahydrocyclopenta[a]phenanthren-17-yl] propanoate"  
+#   #
+loop_
+_pdbx_chem_comp_audit.comp_id
+_pdbx_chem_comp_audit.action_type
+_pdbx_chem_comp_audit.date
+_pdbx_chem_comp_audit.processing_site
+XRD  "Create component"   2021-01-07  RCSB  
+XRD  "Initial release"    2021-10-27  RCSB  
+XRD  "Modify descriptor"  2021-11-08  RCSB  
+#
+_pdbx_chem_comp_synonyms.ordinal     1
+_pdbx_chem_comp_synonyms.comp_id     XRD
+_pdbx_chem_comp_synonyms.name        "(8alpha,11beta,14beta,16alpha,17alpha)-21-chloro-9-fluoro-11-hydroxy-16-methyl-3,20-dioxopregna-1,4-dien-17-yl propanoate"
+_pdbx_chem_comp_synonyms.provenance  PDB
+_pdbx_chem_comp_synonyms.type        ?
+##

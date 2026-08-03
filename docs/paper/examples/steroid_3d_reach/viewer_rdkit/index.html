@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <title>slicedot · RDKit screen explorer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.4.2/3Dmol-min.js"></script>
+  <style>
+    :root {
+      --bg: #141414; --panel: #1e1e1e; --text: #e8e4dc; --muted: #9a958c;
+      --accent: #d4a574; --true: #9ecbff; --fit: #e0b070; --start: #c090ff;
+      --dens: #3cb371; --line: #2e2e2e;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%;
+      background: var(--bg); color: var(--text);
+      font: 14px/1.4 "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    }
+    .layout { display: grid; grid-template-columns: 320px 1fr; height: 100%; }
+    aside {
+      background: var(--panel); border-right: 1px solid var(--line);
+      padding: 1.1rem 1rem; overflow: auto;
+    }
+    h1 { font-size: 1.05rem; font-weight: 600; margin: 0 0 0.25rem; }
+    .sub { color: var(--muted); font-size: 0.82rem; margin-bottom: 1rem; }
+    label {
+      display: block; font-size: 0.75rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em; margin: 0.95rem 0 0.35rem;
+    }
+    select, button {
+      background: #2a2a2a; color: var(--text); border: 1px solid #3a3a3a;
+      border-radius: 6px; padding: 0.45rem 0.7rem; cursor: pointer;
+      font: inherit; width: 100%;
+    }
+    select:hover, button:hover { border-color: var(--accent); }
+    .tog, .model {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.4rem 0.5rem; margin: 0.2rem 0;
+      border: 1px solid var(--line); border-radius: 6px;
+      cursor: pointer; user-select: none;
+    }
+    .tog:hover, .model:hover { border-color: #4a4a4a; }
+    .tog.off { opacity: 0.45; }
+    .model.active { border-color: var(--accent); background: #2a241c; }
+    .tog input, .model input { width: auto; margin: 0; accent-color: var(--accent); }
+    .name { flex: 1; font-weight: 500; font-size: 0.9rem; }
+    .rmsd { font-variant-numeric: tabular-nums; font-size: 0.78rem; color: var(--muted); }
+    .swatch { width: 12px; height: 12px; border-radius: 2px; flex: 0 0 auto; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .val { color: var(--accent); font-variant-numeric: tabular-nums; }
+    .stat { margin: 0.2rem 0; font-size: 0.85rem; }
+    .stat b { font-weight: 500; }
+    .hint {
+      margin-top: 1.2rem; padding-top: 1rem; border-top: 1px solid var(--line);
+      color: var(--muted); font-size: 0.78rem;
+    }
+    .warn { margin-top: 0.5rem; color: #e0a060; font-size: 0.8rem; display: none; }
+    #models { max-height: 280px; overflow: auto; }
+    #viewer {
+      width: 100%; height: 100%; position: relative;
+      background: radial-gradient(ellipse at center, #1c1c1c 0%, #0e0e0e 100%);
+    }
+    .row { display: flex; gap: 0.4rem; }
+    .row button { flex: 1; width: auto; }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h1 id="title">RDKit screen</h1>
+      <div class="sub">PCA place → top-20 ADMM refine</div>
+
+      <label for="ligand">Ligand</label>
+      <select id="ligand"></select>
+      <label for="resolution">Resolution</label>
+      <select id="resolution"></select>
+
+      <div class="stat" style="margin-top:0.7rem">Best RMSD <b id="best">—</b></div>
+      <div class="stat">Screen / total <b id="timing">—</b></div>
+      <div class="stat">Atoms <b id="natoms">—</b></div>
+      <div class="warn" id="warn"></div>
+
+      <label>Layers</label>
+      <div class="tog" id="tog-density"><input type="checkbox" id="chk-density" checked />
+        <span class="swatch" style="background:var(--dens)"></span><span class="name">Density</span></div>
+      <div class="tog" id="tog-true"><input type="checkbox" id="chk-true" checked />
+        <span class="swatch" style="background:var(--true)"></span><span class="name">True</span></div>
+      <div class="tog" id="tog-fit"><input type="checkbox" id="chk-fit" checked />
+        <span class="swatch" style="background:var(--fit)"></span><span class="name">Selected refine</span>
+        <span class="rmsd" id="sel-rmsd">—</span></div>
+      <div class="tog" id="tog-start"><input type="checkbox" id="chk-start" />
+        <span class="swatch" style="background:var(--start)"></span><span class="name">PCA start</span></div>
+
+      <label>Top-20 models <span class="val" id="sel-label">rank 1</span></label>
+      <div id="models"></div>
+
+      <label>Density isovalue <span class="val" id="iso-val">—</span></label>
+      <input id="iso" type="range" min="0" max="100" value="50" />
+      <label>Opacity <span class="val" id="iso-op-val">0.14</span></label>
+      <input id="iso-op" type="range" min="5" max="100" value="14" />
+
+      <label>Camera</label>
+      <div class="row">
+        <button id="btn-zoom" type="button">Fit</button>
+        <button id="btn-solo" type="button">Solo fit</button>
+      </div>
+
+      <div class="hint">
+        Tan = refined pose · blue = true · purple = PCA placement before ADMM.<br/>
+        Click a model row to select it. Drag rotate · scroll zoom.
+      </div>
+    </aside>
+    <div id="viewer"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const CACHE_BUST = String(Date.now());
+    let catalog = null, structure = null, viewer = null, volumeData = null;
+    let loadToken = 0, selected = 0;
+    const layers = { density: true, true: true, fit: true, start: false };
+
+    async function fetchJSON(url) {
+      const r = await fetch(`${url}?v=${CACHE_BUST}`, { cache: "no-store" });
+      if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
+      const t = await r.text();
+      return JSON.parse(t.replace(/\bNaN\b/g, "null").replace(/\bInfinity\b/g, "null"));
+    }
+    async function fetchText(url) {
+      const r = await fetch(`${url}?v=${CACHE_BUST}`, { cache: "no-store" });
+      if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
+      return r.text();
+    }
+
+    function currentIso() {
+      const t = Number($("iso").value) / 100;
+      return structure.iso_low * Math.pow(structure.iso_high / structure.iso_low, t);
+    }
+
+    function drawMolecule(coords, { color, bondRadius = 0.12, atomScale = 0.28, opacity = 1 } = {}) {
+      if (!coords) return;
+      const { atoms, bonds } = structure;
+      for (const [a, b] of bonds) {
+        const ca = coords[a], cb = coords[b];
+        viewer.addCylinder({
+          start: { x: ca[0], y: ca[1], z: ca[2] },
+          end: { x: cb[0], y: cb[1], z: cb[2] },
+          radius: bondRadius, color, opacity, fromCap: 1, toCap: 1,
+        });
+      }
+      for (let i = 0; i < atoms.length; i++) {
+        const p = coords[i];
+        viewer.addSphere({
+          center: { x: p[0], y: p[1], z: p[2] },
+          radius: atomScale, color, opacity,
+        });
+      }
+    }
+
+    function rebuild() {
+      if (!viewer || !structure) return;
+      viewer.removeAllShapes();
+      viewer.removeAllModels();
+      if (layers.density && volumeData) {
+        const iso = currentIso();
+        const op = Number($("iso-op").value) / 100;
+        $("iso-val").textContent = iso.toExponential(2);
+        $("iso-op-val").textContent = op.toFixed(2);
+        viewer.addIsosurface(volumeData, { isoval: iso, color: "#3cb371", opacity: op });
+      }
+      if (layers.true) {
+        drawMolecule(structure.true_coords, { color: "#9ecbff", bondRadius: 0.15, atomScale: 0.34 });
+      }
+      const m = structure.models[selected];
+      if (layers.start && m) {
+        drawMolecule(m.start_coords, { color: "#c090ff", bondRadius: 0.09, atomScale: 0.22, opacity: 0.85 });
+      }
+      if (layers.fit && m) {
+        drawMolecule(m.coords, { color: "#e0b070", bondRadius: 0.11, atomScale: 0.26 });
+      }
+      viewer.render();
+      $("tog-density").classList.toggle("off", !layers.density);
+      $("tog-true").classList.toggle("off", !layers.true);
+      $("tog-fit").classList.toggle("off", !layers.fit);
+      $("tog-start").classList.toggle("off", !layers.start);
+    }
+
+    function zoomToVisible() {
+      const sets = [];
+      if (layers.true) sets.push(structure.true_coords);
+      const m = structure.models[selected];
+      if (layers.fit && m) sets.push(m.coords);
+      if (layers.start && m) sets.push(m.start_coords);
+      if (!sets.length) sets.push(structure.true_coords);
+      const lines = [];
+      let serial = 1;
+      for (const coords of sets) {
+        for (let i = 0; i < coords.length; i++) {
+          const a = structure.atoms[i], c = coords[i];
+          lines.push(
+            `ATOM  ${String(serial).padStart(5)}  ${String(a.name).padStart(3)} ${a.resn} A${String(a.resi).padStart(4)}    `
+            + `${c[0].toFixed(3).padStart(8)}${c[1].toFixed(3).padStart(8)}${c[2].toFixed(3).padStart(8)}`,
+          );
+          serial += 1;
+        }
+      }
+      viewer.addModel(lines.join("\n") + "\nEND\n", "pdb", { assignBonds: false });
+      viewer.zoomTo();
+      viewer.removeAllModels();
+      rebuild();
+    }
+
+    function selectModel(idx) {
+      selected = idx;
+      const m = structure.models[selected];
+      $("sel-label").textContent = `rank ${m.rank} · conf #${m.conf_index}`;
+      $("sel-rmsd").textContent = `${m.refine_rmsd.toFixed(3)} Å`;
+      [...$("models").children].forEach((el, i) => el.classList.toggle("active", i === selected));
+      rebuild();
+    }
+
+    function fillModels() {
+      const box = $("models");
+      box.innerHTML = "";
+      structure.models.forEach((m, i) => {
+        const row = document.createElement("div");
+        row.className = "model" + (i === selected ? " active" : "");
+        row.innerHTML =
+          `<span class="name">#${m.rank} conf ${m.conf_index}</span>`
+          + `<span class="rmsd">${m.refine_rmsd.toFixed(3)} Å · E=${m.refine_E.toExponential(2)}</span>`;
+        row.onclick = () => selectModel(i);
+        box.appendChild(row);
+      });
+    }
+
+    function selectedLigand() {
+      return catalog.ligands.find((L) => L.slug === $("ligand").value);
+    }
+
+    function fillResolutions() {
+      const L = selectedLigand();
+      const sel = $("resolution");
+      const prev = sel.value;
+      sel.innerHTML = "";
+      for (const r of L.resolutions) {
+        const opt = document.createElement("option");
+        opt.value = String(r.resolution);
+        opt.textContent = `${r.resolution} Å  (best ${r.best_rmsd.toFixed(3)} Å)`;
+        sel.appendChild(opt);
+      }
+      const want = prev || String(catalog.default_resolution);
+      if ([...sel.options].some((o) => o.value === want)) sel.value = want;
+      else if (sel.options.length) {
+        // pick best RMSD resolution
+        let bi = 0, br = Infinity;
+        L.resolutions.forEach((r, i) => { if (r.best_rmsd < br) { br = r.best_rmsd; bi = i; } });
+        sel.selectedIndex = bi;
+      }
+    }
+
+    async function loadCurrent() {
+      const token = ++loadToken;
+      const L = selectedLigand();
+      const res = Number($("resolution").value);
+      const entry = L.resolutions.find((r) => r.resolution === res);
+      if (!entry) throw new Error("resolution entry missing");
+      $("title").textContent = L.label;
+      $("warn").style.display = "none";
+      structure = await fetchJSON(entry.path);
+      if (token !== loadToken) return;
+      volumeData = new $3Dmol.VolumeData(await fetchText(structure.density), "cube");
+      if (token !== loadToken) return;
+
+      $("best").textContent = `${structure.models[0].refine_rmsd.toFixed(3)} Å`;
+      const ts = structure.t_screen_s, tt = structure.t_total_s;
+      $("timing").textContent = (ts != null && tt != null)
+        ? `${ts.toFixed(1)}s / ${tt.toFixed(0)}s`
+        : "—";
+      $("natoms").textContent = String(structure.n_atoms);
+      const lo = structure.iso_low, hi = structure.iso_high;
+      const t0 = Math.log(structure.iso_default / lo) / Math.log(hi / lo);
+      $("iso").value = String(Math.round(100 * Math.min(1, Math.max(0, t0))));
+      selected = 0;
+      fillModels();
+      selectModel(0);
+      requestAnimationFrame(() => { viewer.resize(); zoomToVisible(); });
+    }
+
+    function wireToggles() {
+      for (const key of ["density", "true", "fit", "start"]) {
+        const chk = $(`chk-${key}`);
+        chk.onchange = () => { layers[key] = chk.checked; rebuild(); };
+        $(`tog-${key}`).onclick = (e) => {
+          if (e.target.tagName === "INPUT") return;
+          chk.checked = !chk.checked;
+          layers[key] = chk.checked;
+          rebuild();
+        };
+      }
+    }
+
+    async function boot() {
+      if (typeof $3Dmol === "undefined") throw new Error("3Dmol CDN failed");
+      viewer = $3Dmol.createViewer($("viewer"), { backgroundColor: "0x141414", antialias: true });
+      catalog = await fetchJSON("data/catalog.json");
+      if (!catalog.ligands.length) throw new Error("no finished RDKit jobs exported yet");
+
+      const ligSel = $("ligand");
+      for (const L of catalog.ligands) {
+        const opt = document.createElement("option");
+        opt.value = L.slug;
+        const best = Math.min(...L.resolutions.map((r) => r.best_rmsd));
+        opt.textContent = `${L.label}  (${L.resolutions.length} res, best ${best.toFixed(3)} Å)`;
+        ligSel.appendChild(opt);
+      }
+      if (catalog.default_slug) ligSel.value = catalog.default_slug;
+      fillResolutions();
+      wireToggles();
+      ligSel.onchange = () => { fillResolutions(); loadCurrent().catch(showErr); };
+      $("resolution").onchange = () => loadCurrent().catch(showErr);
+      $("iso").oninput = () => rebuild();
+      $("iso-op").oninput = () => rebuild();
+      $("btn-zoom").onclick = () => zoomToVisible();
+      $("btn-solo").onclick = () => {
+        layers.density = true; layers.true = false; layers.fit = true; layers.start = false;
+        $("chk-density").checked = true; $("chk-true").checked = false;
+        $("chk-fit").checked = true; $("chk-start").checked = false;
+        rebuild();
+      };
+      await loadCurrent();
+    }
+
+    function showErr(e) {
+      $("title").textContent = "Failed to load";
+      $("warn").style.display = "block";
+      $("warn").textContent = String(e.message || e);
+      console.error(e);
+    }
+    boot().catch(showErr);
+  </script>
+</body>
+</html>

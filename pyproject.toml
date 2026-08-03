@@ -38,6 +38,7 @@ dev = ["pytest>=7.0"]
 paper = [
     "matplotlib>=3.7",
     "scikit-image>=0.21",
+    "rdkit>=2023.9.1",
 ]
 
 [dependency-groups]
@@ -45,6 +46,7 @@ dev = ["pytest>=7.0"]
 paper = [
     "matplotlib>=3.7",
     "scikit-image>=0.21",
+    "rdkit>=2023.9.1",
 ]
 
 [project.urls]

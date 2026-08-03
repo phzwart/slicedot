@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-store" />
+  <title>slicedot · steroid ×1 / ×2 compare</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.4.2/3Dmol-min.js"></script>
+  <style>
+    :root {
+      --bg: #141414;
+      --panel: #1e1e1e;
+      --text: #e8e4dc;
+      --muted: #9a958c;
+      --accent: #d4a574;
+      --true: #9ecbff;
+      --x1: #e0b070;
+      --x2: #e070a8;
+      --dens: #3cb371;
+      --line: #2e2e2e;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%;
+      background: var(--bg); color: var(--text);
+      font: 14px/1.4 "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      height: 100%;
+    }
+    aside {
+      background: var(--panel);
+      border-right: 1px solid var(--line);
+      padding: 1.1rem 1rem;
+      overflow: auto;
+    }
+    h1 {
+      font-size: 1.05rem; font-weight: 600; margin: 0 0 0.25rem;
+      letter-spacing: 0.02em;
+    }
+    .sub { color: var(--muted); font-size: 0.82rem; margin-bottom: 1rem; }
+    label {
+      display: block; font-size: 0.75rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.06em; margin: 0.95rem 0 0.35rem;
+    }
+    select, button {
+      background: #2a2a2a; color: var(--text); border: 1px solid #3a3a3a;
+      border-radius: 6px; padding: 0.45rem 0.7rem; cursor: pointer;
+      font: inherit; width: 100%;
+    }
+    select:hover, button:hover { border-color: var(--accent); }
+    .tog {
+      display: flex; align-items: center; gap: 0.55rem;
+      padding: 0.45rem 0.55rem; margin: 0.25rem 0;
+      border: 1px solid var(--line); border-radius: 6px;
+      cursor: pointer; user-select: none;
+    }
+    .tog:hover { border-color: #4a4a4a; }
+    .tog.off { opacity: 0.45; }
+    .tog input { accent-color: var(--accent); width: auto; margin: 0; }
+    .tog .name { flex: 1; font-weight: 500; }
+    .tog .rmsd {
+      font-variant-numeric: tabular-nums; font-size: 0.8rem; color: var(--muted);
+    }
+    .swatch {
+      display: inline-block; width: 12px; height: 12px; border-radius: 2px;
+      flex: 0 0 auto;
+    }
+    input[type="range"] { width: 100%; accent-color: var(--accent); }
+    .val { color: var(--accent); font-variant-numeric: tabular-nums; }
+    .stat { margin: 0.2rem 0; font-size: 0.85rem; }
+    .stat b { color: var(--text); font-weight: 500; }
+    .hint {
+      margin-top: 1.3rem; padding-top: 1rem; border-top: 1px solid var(--line);
+      color: var(--muted); font-size: 0.78rem;
+    }
+    .warn {
+      margin-top: 0.6rem; color: #e0a060; font-size: 0.8rem;
+    }
+    #viewer {
+      width: 100%; height: 100%; position: relative;
+      background: radial-gradient(ellipse at center, #1c1c1c 0%, #0e0e0e 100%);
+    }
+    .row { display: flex; gap: 0.45rem; }
+    .row button { width: auto; flex: 1; }
+    button.active {
+      background: #3a3228; border-color: var(--accent); color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <h1 id="title">Steroid compare</h1>
+      <div class="sub">Final polish poses · true vs ×1 vs ×2</div>
+
+      <label for="ligand">Ligand</label>
+      <select id="ligand"></select>
+
+      <label for="resolution">Resolution</label>
+      <select id="resolution"></select>
+
+      <div class="stat" style="margin-top:0.7rem">Atoms <b id="natoms">—</b></div>
+      <div class="stat">Bonds <b id="nbonds">—</b></div>
+      <div class="stat">σ <b id="sigma">—</b></div>
+      <div class="stat">Grid <b id="grid">—</b></div>
+      <div class="warn" id="warn" style="display:none"></div>
+
+      <label>Layers</label>
+      <div id="tog-density" class="tog">
+        <input type="checkbox" id="chk-density" checked />
+        <span class="swatch" style="background:var(--dens)"></span>
+        <span class="name">Density</span>
+      </div>
+      <div id="tog-true" class="tog">
+        <input type="checkbox" id="chk-true" checked />
+        <span class="swatch" style="background:var(--true)"></span>
+        <span class="name">True</span>
+        <span class="rmsd">ref</span>
+      </div>
+      <div id="tog-x1" class="tog">
+        <input type="checkbox" id="chk-x1" checked />
+        <span class="swatch" style="background:var(--x1)"></span>
+        <span class="name">×1 final</span>
+        <span class="rmsd" id="rmsd-x1">—</span>
+      </div>
+      <div id="tog-x2" class="tog">
+        <input type="checkbox" id="chk-x2" checked />
+        <span class="swatch" style="background:var(--x2)"></span>
+        <span class="name">×2 final</span>
+        <span class="rmsd" id="rmsd-x2">—</span>
+      </div>
+
+      <label>Density isovalue <span class="val" id="iso-val">—</span></label>
+      <input id="iso" type="range" min="0" max="100" value="50" />
+
+      <label>Density opacity <span class="val" id="iso-op-val">0.14</span></label>
+      <input id="iso-op" type="range" min="5" max="100" value="14" />
+
+      <label>Camera</label>
+      <div class="row">
+        <button id="btn-zoom" type="button">Fit</button>
+        <button id="btn-solo-true" type="button">Solo true</button>
+      </div>
+      <div class="row" style="margin-top:0.35rem">
+        <button id="btn-solo-x1" type="button">Solo ×1</button>
+        <button id="btn-solo-x2" type="button">Solo ×2</button>
+      </div>
+      <div class="row" style="margin-top:0.35rem">
+        <button id="btn-all" type="button">Show all</button>
+      </div>
+
+      <div class="hint">
+        Final = L1+geom polish pose from OT→name→ADMM.<br/>
+        RMSDs are vs the true reference (automorphism-aware polish RMSD).<br/>
+        Drag rotate · scroll zoom · shift-drag pan.
+      </div>
+    </aside>
+    <div id="viewer"></div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const ELEM_COLOR = { C: "#c8c8c8", N: "#3050f8", O: "#ff0d0d", S: "#ffff30", F: "#90e040", Cl: "#1ff01f", Br: "#a62929" };
+    // Bust browser cache after asset re-exports.
+    const CACHE_BUST = String(Date.now());
+
+    let catalog = null;
+    let structure = null;
+    let viewer = null;
+    let volumeData = null;
+    let loadToken = 0;
+
+    async function fetchJSON(url) {
+      const r = await fetch(`${url}${url.includes("?") ? "&" : "?"}v=${CACHE_BUST}`, {
+        cache: "no-store",
+      });
+      if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
+      // Python json.dumps(float('nan')) emits bare NaN, which breaks JSON.parse.
+      const text = await r.text();
+      const cleaned = text.replace(/\bNaN\b/g, "null").replace(/\bInfinity\b/g, "null").replace(/-Infinity/g, "null");
+      try {
+        return JSON.parse(cleaned);
+      } catch (e) {
+        throw new Error(`Bad JSON from ${url}: ${e.message}`);
+      }
+    }
+
+    async function fetchText(url) {
+      const r = await fetch(`${url}${url.includes("?") ? "&" : "?"}v=${CACHE_BUST}`, {
+        cache: "no-store",
+      });
+      if (!r.ok) throw new Error(`${url} → HTTP ${r.status}`);
+      return r.text();
+    }
+
+    const layers = {
+      density: true,
+      true: true,
+      x1: true,
+      x2: true,
+    };
+
+    function fmtRmsd(v) {
+      if (v == null || !Number.isFinite(v)) return "n/a";
+      return `${v.toFixed(3)} Å`;
+    }
+
+    function currentIso() {
+      const t = Number($("iso").value) / 100;
+      const lo = structure.iso_low, hi = structure.iso_high;
+      return lo * Math.pow(hi / lo, t);
+    }
+
+    function drawDensity() {
+      if (!layers.density || !volumeData) return;
+      const iso = currentIso();
+      const op = Number($("iso-op").value) / 100;
+      $("iso-val").textContent = iso.toExponential(2);
+      $("iso-op-val").textContent = op.toFixed(2);
+      viewer.addIsosurface(volumeData, {
+        isoval: iso,
+        color: "#3cb371",
+        opacity: op,
+      });
+    }
+
+    function drawMolecule(coords, {
+      colorOverride = null,
+      bondRadius = 0.12,
+      atomScale = 0.28,
+      opacity = 1.0,
+    } = {}) {
+      if (!coords || !coords.length) return;
+      const atoms = structure.atoms;
+      const bonds = structure.bonds;
+      for (const [a, b] of bonds) {
+        const ca = coords[a], cb = coords[b];
+        const col = colorOverride || ELEM_COLOR[atoms[a].elem] || "#cccccc";
+        viewer.addCylinder({
+          start: { x: ca[0], y: ca[1], z: ca[2] },
+          end: { x: cb[0], y: cb[1], z: cb[2] },
+          radius: bondRadius,
+          color: col,
+          opacity,
+          fromCap: 1,
+          toCap: 1,
+        });
+      }
+      for (let i = 0; i < atoms.length; i++) {
+        const p = coords[i];
+        const col = colorOverride || ELEM_COLOR[atoms[i].elem] || "#cccccc";
+        viewer.addSphere({
+          center: { x: p[0], y: p[1], z: p[2] },
+          radius: atomScale,
+          color: col,
+          opacity,
+        });
+      }
+    }
+
+    function rebuild() {
+      if (!viewer || !structure) return;
+      viewer.removeAllShapes();
+      viewer.removeAllModels();
+      drawDensity();
+      // Draw true first (under), then ×1, then ×2 on top for readability.
+      if (layers.true) {
+        drawMolecule(structure.true_coords, {
+          colorOverride: "#9ecbff",
+          bondRadius: 0.15,
+          atomScale: 0.34,
+        });
+      }
+      if (layers.x1 && structure.x1 && structure.x1.available) {
+        drawMolecule(structure.x1.coords, {
+          colorOverride: "#e0b070",
+          bondRadius: 0.11,
+          atomScale: 0.26,
+        });
+      }
+      if (layers.x2 && structure.x2 && structure.x2.available) {
+        drawMolecule(structure.x2.coords, {
+          colorOverride: "#e070a8",
+          bondRadius: 0.11,
+          atomScale: 0.26,
+        });
+      }
+      viewer.render();
+      syncTogClasses();
+    }
+
+    function syncTogClasses() {
+      $("tog-density").classList.toggle("off", !layers.density);
+      $("tog-true").classList.toggle("off", !layers.true);
+      $("tog-x1").classList.toggle("off", !layers.x1 || !(structure?.x1?.available));
+      $("tog-x2").classList.toggle("off", !layers.x2 || !(structure?.x2?.available));
+    }
+
+    function zoomToVisible() {
+      const sets = [];
+      if (layers.true) sets.push(structure.true_coords);
+      if (layers.x1 && structure.x1?.available) sets.push(structure.x1.coords);
+      if (layers.x2 && structure.x2?.available) sets.push(structure.x2.coords);
+      if (!sets.length) sets.push(structure.true_coords);
+      const lines = [];
+      let serial = 1;
+      for (const coords of sets) {
+        for (let i = 0; i < coords.length; i++) {
+          const a = structure.atoms[i];
+          const c = coords[i];
+          lines.push(
+            `ATOM  ${String(serial).padStart(5)}  ${String(a.name).padStart(3)} ${a.resn} A${String(a.resi).padStart(4)}    `
+            + `${c[0].toFixed(3).padStart(8)}${c[1].toFixed(3).padStart(8)}${c[2].toFixed(3).padStart(8)}`,
+          );
+          serial += 1;
+        }
+      }
+      viewer.addModel(lines.join("\n") + "\nEND\n", "pdb", { assignBonds: false });
+      viewer.zoomTo();
+      viewer.removeAllModels();
+      rebuild();
+    }
+
+    function selectedLigandEntry() {
+      const slug = $("ligand").value;
+      return catalog.ligands.find((L) => L.slug === slug);
+    }
+
+    function fillResolutions() {
+      const L = selectedLigandEntry();
+      const sel = $("resolution");
+      const prev = sel.value;
+      sel.innerHTML = "";
+      for (const r of L.resolutions) {
+        const opt = document.createElement("option");
+        opt.value = String(r.resolution);
+        const bits = [];
+        if (r.has_x1) bits.push("×1");
+        if (r.has_x2) bits.push("×2");
+        opt.textContent = `${r.resolution} Å` + (bits.length ? `  (${bits.join(", ")})` : "  (ref only)");
+        sel.appendChild(opt);
+      }
+      const want = prev || String(catalog.default_resolution);
+      if ([...sel.options].some((o) => o.value === want)) sel.value = want;
+      else if (sel.options.length) sel.selectedIndex = Math.min(1, sel.options.length - 1);
+    }
+
+    async function loadCurrent() {
+      const token = ++loadToken;
+      const L = selectedLigandEntry();
+      const res = Number($("resolution").value);
+      const entry = L.resolutions.find((r) => r.resolution === res);
+      if (!entry) return;
+      $("title").textContent = L.label;
+      $("natoms").textContent = "…";
+      $("warn").style.display = "none";
+
+      const structR = await fetchJSON(entry.path);
+      if (token !== loadToken) return;
+      structure = structR;
+
+      const cubeText = await fetchText(structure.density);
+      if (token !== loadToken) return;
+      if (typeof $3Dmol === "undefined") {
+        throw new Error("3Dmol failed to load from CDN — check network / adblock");
+      }
+      volumeData = new $3Dmol.VolumeData(cubeText, "cube");
+
+      $("natoms").textContent = String(structure.n_atoms);
+      $("nbonds").textContent = String(structure.n_bonds);
+      $("sigma").textContent = structure.sigma.toFixed(3);
+      $("grid").textContent = structure.grid.join(" × ");
+      $("rmsd-x1").textContent = structure.x1?.available ? fmtRmsd(structure.x1.rmsd) : "missing";
+      $("rmsd-x2").textContent = structure.x2?.available ? fmtRmsd(structure.x2.rmsd) : "missing";
+      // Reset layers to all available on each ligand/resolution change.
+      layers.density = true;
+      layers.true = true;
+      layers.x1 = !!structure.x1?.available;
+      layers.x2 = !!structure.x2?.available;
+      $("chk-density").checked = true;
+      $("chk-true").checked = true;
+      $("chk-x1").disabled = !structure.x1?.available;
+      $("chk-x2").disabled = !structure.x2?.available;
+      $("chk-x1").checked = layers.x1;
+      $("chk-x2").checked = layers.x2;
+
+      const missing = [];
+      if (!structure.x1?.available) missing.push("×1");
+      if (!structure.x2?.available) missing.push("×2");
+      if (missing.length) {
+        $("warn").style.display = "block";
+        $("warn").textContent = `Missing run(s): ${missing.join(", ")}`;
+      }
+
+      const lo = structure.iso_low, hi = structure.iso_high;
+      const t0 = Math.log(structure.iso_default / lo) / Math.log(hi / lo);
+      $("iso").value = String(Math.round(100 * Math.min(1, Math.max(0, t0))));
+
+      requestAnimationFrame(() => {
+        viewer.resize();
+        zoomToVisible();
+      });
+    }
+
+    function wireToggles() {
+      const bind = (chkId, key) => {
+        $(chkId).onchange = () => {
+          layers[key] = $(chkId).checked;
+          rebuild();
+        };
+        // clicking the row toggles the checkbox
+        $(`tog-${key === "density" ? "density" : key}`).onclick = (e) => {
+          if (e.target.tagName === "INPUT") return;
+          if ($(chkId).disabled) return;
+          $(chkId).checked = !$(chkId).checked;
+          layers[key] = $(chkId).checked;
+          rebuild();
+        };
+      };
+      bind("chk-density", "density");
+      bind("chk-true", "true");
+      bind("chk-x1", "x1");
+      bind("chk-x2", "x2");
+    }
+
+    function setSolo(which) {
+      layers.density = true;
+      layers.true = which === "true" || which === "all";
+      layers.x1 = (which === "x1" || which === "all") && !!structure?.x1?.available;
+      layers.x2 = (which === "x2" || which === "all") && !!structure?.x2?.available;
+      if (which === "all") {
+        layers.true = true;
+        layers.x1 = !!structure?.x1?.available;
+        layers.x2 = !!structure?.x2?.available;
+      }
+      $("chk-density").checked = layers.density;
+      $("chk-true").checked = layers.true;
+      $("chk-x1").checked = layers.x1;
+      $("chk-x2").checked = layers.x2;
+      rebuild();
+    }
+
+    async function boot() {
+      if (typeof $3Dmol === "undefined") {
+        throw new Error("3Dmol failed to load from CDN — check network / adblock");
+      }
+      viewer = $3Dmol.createViewer($("viewer"), {
+        backgroundColor: "0x141414",
+        antialias: true,
+      });
+      catalog = await fetchJSON("data/catalog.json");
+      if (!catalog.ligands || !catalog.ligands.length) {
+        throw new Error("catalog.json has no ligands");
+      }
+
+      const ligSel = $("ligand");
+      ligSel.innerHTML = "";
+      for (const L of catalog.ligands) {
+        const opt = document.createElement("option");
+        opt.value = L.slug;
+        const n1 = L.resolutions.filter((r) => r.has_x1).length;
+        const n2 = L.resolutions.filter((r) => r.has_x2).length;
+        opt.textContent = `${L.label}  (×1:${n1}  ×2:${n2})`;
+        ligSel.appendChild(opt);
+      }
+      if (catalog.default_slug) ligSel.value = catalog.default_slug;
+
+      fillResolutions();
+      wireToggles();
+
+      ligSel.onchange = () => { fillResolutions(); loadCurrent().catch(showErr); };
+      $("resolution").onchange = () => loadCurrent().catch(showErr);
+      $("iso").oninput = () => rebuild();
+      $("iso-op").oninput = () => rebuild();
+      $("btn-zoom").onclick = () => zoomToVisible();
+      $("btn-solo-true").onclick = () => setSolo("true");
+      $("btn-solo-x1").onclick = () => setSolo("x1");
+      $("btn-solo-x2").onclick = () => setSolo("x2");
+      $("btn-all").onclick = () => setSolo("all");
+
+      await loadCurrent();
+    }
+
+    function showErr(e) {
+      $("title").textContent = "Failed to load";
+      $("warn").style.display = "block";
+      $("warn").textContent = (e && e.stack) ? String(e.message || e) : String(e);
+      console.error(e);
+    }
+
+    boot().catch(showErr);
+  </script>
+</body>
+</html>
